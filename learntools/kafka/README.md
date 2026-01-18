@@ -169,7 +169,7 @@ Kafka feeds decisions in _near real time_.
 
 We use **`confluent-kafka`** – a production-grade Python client built on librdkafka.
 
-![Kafka APIs Overview](images/apachekafka.png)
+![Kafka APIs Overview](images/kafkaapi.png)
 
 ### Four Core APIs:
 
