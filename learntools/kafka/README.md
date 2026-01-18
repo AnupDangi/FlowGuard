@@ -262,17 +262,6 @@ Kafka teaches systems thinking whether you like it or not.
 
 Once you see that distinction, streaming architectures stop being confusing and start being inevitable.
 
----
-
-## 🚀 Next Steps (Orbiting Ideas)
-
-- Kafka vs RabbitMQ (queues vs logs)
-- Exactly-once semantics (hard, beautiful problem)
-- Kafka → ML feature pipelines
-- Why streaming beats batch for user behavior systems
-
----
-
 ## 📝 Project Structure
 
 ```
