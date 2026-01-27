@@ -2,6 +2,9 @@
 
 This mini project contains two main components:
 
+- Idea is simulate a kafka producer that produces order data to a Kafka topic.
+- Spark streaming application that consumes the order data from Kafka topic and process it in real-time and convert into bronze, silver, gold layers.
+
 ## Kafka
 
 ### File: `producer_order.py`
