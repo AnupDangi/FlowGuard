@@ -118,7 +118,7 @@ We're using free Apache-based open-source stack:
 
 ### What We're Building
 
-![Zomato Real-Time Ads Platform](./ZomatoDataEngineering.png.png)
+![Zomato Real-Time Ads Platform](./ZomatoDataEngineering.png)
 
 **Real-time ads billing simulation for Zomato:**
 

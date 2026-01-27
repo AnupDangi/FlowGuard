@@ -35,6 +35,7 @@ fetch_user = PythonOperator(
 ```
 
 **Task Dependencies**:
+
 ```
 Linear:    task_a >> task_b >> task_c
 Parallel:  task_a >> [task_b, task_c] >> task_d
@@ -46,17 +47,18 @@ Parallel:  task_a >> [task_b, task_c] >> task_d
 
 Template for task execution.
 
-| Operator | Purpose |
-|----------|---------|
-| `PythonOperator` | Run Python function |
-| `BashOperator` | Run shell command |
-| `SparkSubmitOperator` | Submit Spark job |
+| Operator              | Purpose             |
+| --------------------- | ------------------- |
+| `PythonOperator`      | Run Python function |
+| `BashOperator`        | Run shell command   |
+| `SparkSubmitOperator` | Submit Spark job    |
 
 ---
 
 ### 4. Scheduler
 
 Decides when DAGs run based on:
+
 - `schedule_interval` (cron or preset)
 - Task dependencies
 - Retry logic
@@ -88,6 +90,7 @@ def write_to_bronze(data, **context):
 ```
 
 **Key Concepts**:
+
 - `data_interval_start`: Logical execution time
 - Partitioning by date: `dt=2026-01-27`
 - Idempotent writes: Same run_id overwrites
@@ -106,6 +109,7 @@ airflow dags backfill \
 ```
 
 **Catchup Parameter**:
+
 ```python
 catchup=True   # Auto-backfill missed schedules
 catchup=False  # Only run from now onwards
@@ -123,18 +127,18 @@ catchup=False  # Only run from now onwards
     catchup=True
 )
 def bronze_ingestion():
-    
+
     @task
     def fetch_users():
         return requests.get("https://api.example.com").json()
-    
+
     @task
     def write_to_bronze(data, **context):
         date = context["data_interval_start"].date()
         path = f"/bronze/users/dt={date}/users.json"
         # Write data
         return {"path": path}
-    
+
     write_to_bronze(fetch_users())
 
 bronze_ingestion()
