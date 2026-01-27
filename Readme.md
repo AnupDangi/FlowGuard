@@ -107,7 +107,7 @@ Advanced stream processing:
 
 We're using free Apache-based open-source stack:
 
-![Zomato Tech Stack](https://raw.githubusercontent.com/user-attachments/assets/zomato-tech-stack.png)
+![Zomato Tech Stack](./ZomatoStack.png)
 
 - **Apache Kafka** - Real-time data streaming
 - **Apache Hadoop** - Big data storage foundation
@@ -118,7 +118,7 @@ We're using free Apache-based open-source stack:
 
 ### What We're Building
 
-![Zomato Real-Time Ads Platform](https://raw.githubusercontent.com/user-attachments/assets/zomato-data-engineering-flow.png)
+![Zomato Real-Time Ads Platform](./ZomatoDataEngineering.png.png)
 
 **Real-time ads billing simulation for Zomato:**
 
@@ -130,7 +130,7 @@ We're using free Apache-based open-source stack:
 
 ### Reference Architecture
 
-![AWS Data Engineering Stack](https://raw.githubusercontent.com/user-attachments/assets/aws-architecture-example.png)
+![AWS Data Engineering Stack](./DataEngineering.png)
 
 Example of complete data engineering cycle using Amazon stack (for reference only).
 
