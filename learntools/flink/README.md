@@ -16,8 +16,7 @@ Flink provides multiple abstraction levels:
 - **Table API**: Declarative DSL for relational operations
 - **DataStream API**: Core streaming APIs (most control)
 - **Process Functions**: Low-level building blocks for custom state, timers, and event processing
-
-**Which to use?** Start with DataStream API for learning core concepts, move to Table API/SQL for production productivity.
+  **Which to use?** Start with DataStream API for learning core concepts, move to Table API/SQL for production productivity.
 
 ---
 
@@ -242,5 +241,6 @@ source.set_max_parallelism(128)
 
 **Tutorials**:
 
+- [Concepts for Flink](https://www.youtube.com/watch?v=nfMANR13ZSA)
 - [AWS Kinesis Streams Guide](https://medium.com/@simardeep.oberoi/understanding-aws-kinesis-data-streams-a-comprehensive-guide-to-kinesis-data-streams-producers-f314f9a3bbb2)
 - [Flink Video Tutorial](https://www.youtube.com/watch?v=rLXZQnBNg7E&list=PLL2hlSFBmWwx8AayxvaYaFZ7jibd7FD3d&index=2)
