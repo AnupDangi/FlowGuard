@@ -2,8 +2,10 @@ pyspark
 kagglehub
 confluent-kafka
 apache-airflow
+apache-airflow-providers-apache-spark
 apache-flink
+faker
+pandas
+numpy
+requests
 
-# Fix dependency conflicts
-grpcio>=1.76.0
-protobuf>=6.31.1,<7.0.0

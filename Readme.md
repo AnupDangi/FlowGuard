@@ -166,13 +166,42 @@ FlowGuard/
 
 ## Progress Timeline
 
-- I actually learnt these all within 2 weeks,watched short yt videos read blogs and build project alongside to learn.
+- I actually learnt these all within January along side external exams (but challenge is a challenge:),watched short yt videos read blogs and build project alongside to learn. Didnt read books I have not mastered everything but know the basics and moving towards intermediate level by reading books,blogs and building projects.
+
+  The Intention Behind Data-Engineering was simple we had data engineering and MLOPS subject in our curriculum but mostly we read theories and how acutally it works behind scenes how does industry uses this what tools are there in the market and most importantly how to think like a data engineer.Though i have not integrated this to production with CI/CD ,testing and monitoring,but i dont think those are too complex,mostly the intention was to learn what actually data engineering is but i know this full repo is for basics with small projects to learn.For further path books and projects are the ways to grow.
+  I enjoyed this month's journery and challenge.Will come up amazing projects in different domains but integrating data engineering might be for ai agents,or real time analysis.
+
+  Look if you think i dont know azure data engineering tools or any managed data engineering tools or stack that's fine because you can learn it on the go its all on your fundamentals and data modeling.
+
+  If you want to be data engineer you have to be well versed with these are to main skills
+  - SQL
+  - Python or Java (python is easier to learn and implement but java is more used in industry for data engineering but depends on company to company)
+  - Data Modeling
+  - Cloud Basics (must be able to work with atleast one cloud provider later on you can switch based on requirements)
+    (Note these are must have skills later on you can learn more tools and technologies every tool has some advantages on requirements later on you can learn databricks ,dbt,snowflake,redshift,bigquery etc it's all based on requirement)
+    i think is required for data engineers for further progress you can read the blogs and tutorials i have given in the notion.
+
+- Happy Learning and Building! 👨🏻‍💻 ❤️
 
 ## References
 
-- [Zomato Tech Blog on Data Engineering](https://www.zomato.com/blog/eliminating-bottlenecks-in-real-time-data-streaming-a-zomato-ads-flink-journey/)
+## Books: Read this :
+
+Start with Fundamentals of DataEngineering book
+
+📖 [Read Books](</books/Fundamentals%20of%20Data%20Engineering%20(Reis,%20JoeHousley,%20Matt)%20(Z-Library).pdf>)
+
+This notion Tracker has everything you need should check it out once.
 
 - [Notion Tracker](https://www.notion.so/January-2db64cdddab780468bace3df7d1592ae)
+
+## Additional books link if you want to explore more
+
+- Books (https://github.com/letthedataconfess/Data-Engineering-Books/tree/main?tab=readme-ov-file#readme)
+
+## Additional Blogs though included in notion tracker
+
+- [Zomato Tech Blog on Data Engineering](https://www.zomato.com/blog/eliminating-bottlenecks-in-real-time-data-streaming-a-zomato-ads-flink-journey/)
 
 - [Medallion Architecture](https://medium.com/@yudayreddy1/understanding-bronze-silver-and-gold-layers-in-data-engineering-5dd748b71d35)
 
