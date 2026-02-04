@@ -1,0 +1,32 @@
+# Kafka Topics Configuration
+# This file defines all Kafka topics for the FlowGuard project
+
+topics:
+  # Raw Events Topics (Ingestion Layer)
+  - name: raw.orders.v1
+    partitions: 3
+    replication_factor: 2
+    config:
+      retention.ms: 604800000  # 7 days
+      compression.type: snappy
+      min.insync.replicas: 2
+    description: "Raw order events from user actions"
+    
+  - name: raw.clicks.v1
+    partitions: 6
+    replication_factor: 2
+    config:
+      retention.ms: 172800000  # 2 days
+      compression.type: snappy
+      min.insync.replicas: 2
+    description: "Raw click/impression events for ad tracking"
+
+  # Future: Attributed Events (will be added in Phase 2)
+  # - name: attributed.events.v1
+  #   partitions: 4
+  #   replication_factor: 2
+
+  # Future: Incremental Updates (will be added in Phase 2)
+  # - name: incremental.billing.v1
+  #   partitions: 3
+  #   replication_factor: 2
