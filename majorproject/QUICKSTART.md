@@ -5,6 +5,7 @@
 Successfully implemented the Events Gateway service with Kafka integration!
 
 ### **What's Working:**
+
 - ✅ Kafka cluster (3 brokers + Zookeeper)
 - ✅ Kafka UI for monitoring (port 8080)
 - ✅ FastAPI Events Gateway (port 8000)
@@ -18,6 +19,7 @@ Successfully implemented the Events Gateway service with Kafka integration!
 ## 🚀 Quick Start Guide
 
 ### **1. Start Kafka Cluster**
+
 ```bash
 cd /Users/anupdangi/Desktop/AnupAI/projects/2026/FlowGuard/majorproject
 
@@ -32,6 +34,7 @@ open http://localhost:8080
 ```
 
 ### **2. Install Python Dependencies**
+
 ```bash
 # Activate virtual environment
 source venv/bin/activate
@@ -41,6 +44,7 @@ pip install -r requirements.txt
 ```
 
 ### **3. Start Events Gateway**
+
 ```bash
 # Method 1: Using CLI
 python src/main.py start-gateway
@@ -53,6 +57,7 @@ python src/main.py start-gateway --port 8001 --reload
 ```
 
 ### **4. Test the API**
+
 ```bash
 # Check if service is running
 curl http://localhost:8000/
@@ -85,6 +90,7 @@ curl -X POST http://localhost:8000/api/v1/clicks \
 ```
 
 ### **5. Verify in Kafka UI**
+
 1. Open http://localhost:8080
 2. Go to "Topics"
 3. Check `raw.orders.v1` and `raw.clicks.v1`
@@ -125,17 +131,18 @@ majorproject/
 
 ### **Events Gateway (Port 8000)**
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Service information |
-| GET | `/health` | Health check with Kafka status |
-| GET | `/metrics` | Producer statistics |
-| GET | `/docs` | Interactive API documentation |
-| POST | `/api/v1/orders` | Submit order event |
-| POST | `/api/v1/clicks` | Submit click/impression event |
-| POST | `/api/v1/clicks/impression` | Submit impression event |
+| Method | Endpoint                    | Description                    |
+| ------ | --------------------------- | ------------------------------ |
+| GET    | `/`                         | Service information            |
+| GET    | `/health`                   | Health check with Kafka status |
+| GET    | `/metrics`                  | Producer statistics            |
+| GET    | `/docs`                     | Interactive API documentation  |
+| POST   | `/api/v1/orders`            | Submit order event             |
+| POST   | `/api/v1/clicks`            | Submit click/impression event  |
+| POST   | `/api/v1/clicks/impression` | Submit impression event        |
 
 ### **Kafka UI (Port 8080)**
+
 - Dashboard: http://localhost:8080
 - Topics management
 - Message browser
@@ -160,10 +167,10 @@ python src/main.py simulate --rate 5 --duration 10
 
 ## 📊 Kafka Topics
 
-| Topic Name | Partitions | Replication | Retention | Purpose |
-|------------|------------|-------------|-----------|---------|
-| `raw.orders.v1` | 3 | 2 | 7 days | Order events from users |
-| `raw.clicks.v1` | 6 | 2 | 2 days | Click/impression events for ads |
+| Topic Name      | Partitions | Replication | Retention | Purpose                         |
+| --------------- | ---------- | ----------- | --------- | ------------------------------- |
+| `raw.orders.v1` | 3          | 2           | 7 days    | Order events from users         |
+| `raw.clicks.v1` | 6          | 2           | 2 days    | Click/impression events for ads |
 
 ---
 
@@ -184,6 +191,7 @@ python src/main.py simulate --rate 5 --duration 10
 ## 🐛 Troubleshooting
 
 ### Kafka not starting?
+
 ```bash
 # Check logs
 docker-compose logs kafka-broker-1
@@ -193,6 +201,7 @@ docker-compose restart
 ```
 
 ### Events Gateway can't connect to Kafka?
+
 ```bash
 # Check if Kafka is running
 docker ps | grep kafka
@@ -205,6 +214,7 @@ python src/main.py health-check
 ```
 
 ### Port already in use?
+
 ```bash
 # Check what's using port 8000
 lsof -i :8000

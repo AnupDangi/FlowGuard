@@ -1,31 +1,31 @@
 # Core Web Framework
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
 
 # Kafka Client
-confluent-kafka==2.3.0
+confluent-kafka
 
 # Configuration & Environment
-python-dotenv==1.0.0
-pyyaml==6.0.1
+python-dotenv
+pyyaml
 
 # Data Generation & Testing
-faker==22.6.0
+faker
 
 # CLI Tools
-click==8.1.7
+click
 
 # Data Processing (for future use)
-pandas==2.2.0
-numpy==1.26.3
+pandas
+numpy
 
 # Logging & Monitoring
-colorlog==6.8.0
+colorlog
 
 # Development Tools
-pytest==7.4.4
-pytest-asyncio==0.23.3
-httpx==0.26.0  
+pytest
+pytest-asyncio
+httpx
 pyyaml
