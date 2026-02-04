@@ -1,1 +1,0 @@
-## Create a producer to push the kafka topics event to real time processing system
