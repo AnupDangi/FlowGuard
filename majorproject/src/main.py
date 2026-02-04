@@ -1,47 +1,104 @@
-## here we start the Zomato REal time project
+"""FlowGuard Main CLI
 
+Command-line interface for managing FlowGuard services and utilities.
+"""
 
+import click
+import logging
+import sys
+import os
+from dotenv import load_dotenv
 
-## Step 1: Registering the users actions in the platform from the Web APP
-## Steps create a Fastapi app to create endpoint to register user actions and push them to Kafka topic
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+# Load environment variables
+load_dotenv()
 
+# Add src to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-app=FastAPI()
-
-origins=[
-    "*"
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True, 
-    allow_methods=["*"],
-    allow_headers=["*"],
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
 
 
-class UserAction(BaseModel):
-    user_id: int 
-    action: str
-    item_id: int
-
-
-@app.post("/orders",response_model=UserAction)
-async def create_order(action:UserAction):
-    ## here will push the data to kafka topics
-
+@click.group()
+def cli():
+    """FlowGuard - Real-time Event Processing Pipeline
+    
+    Main CLI for managing FlowGuard services and utilities.
+    """
     pass
 
 
-
-
-## Next Step is to create the kafka producer to push the data to kafka topics but it will be done by events_gateway
-if __name__=="__main__":
+@cli.command()
+@click.option('--host', default='0.0.0.0', help='Host to bind to')
+@click.option('--port', default=8000, help='Port to bind to')
+@click.option('--reload', is_flag=True, help='Enable auto-reload')
+def start_gateway(host: str, port: int, reload: bool):
+    """Start the Events Gateway service"""
     import uvicorn
-    uvicorn.run(app,host="0.0.0.0",port=8000)
+    
+    click.echo("="*50)
+    click.echo("Starting FlowGuard Events Gateway")
+    click.echo("="*50)
+    click.echo(f"Host: {host}")
+    click.echo(f"Port: {port}")
+    click.echo(f"Reload: {reload}")
+    click.echo("="*50)
+    
+    uvicorn.run(
+        "src.services.events_gateway.main:app",
+        host=host,
+        port=port,
+        reload=reload,
+        log_level="info"
+    )
+
+
+@cli.command()
+def health_check():
+    """Check health of all FlowGuard components"""
+    from src.services.events_gateway.producers.kafka_producer import check_kafka_connection
+    
+    click.echo("="*50)
+    click.echo("FlowGuard Health Check")
+    click.echo("="*50)
+    
+    # Check Kafka
+    click.echo("\nKafka Cluster:")
+    if check_kafka_connection():
+        click.secho("  ✓ Connected", fg='green')
+    else:
+        click.secho("  ✗ Not connected", fg='red')
+    
+    click.echo("\n" + "="*50)
+
+
+@cli.command()
+@click.option('--rate', default=1, help='Events per second')
+@click.option('--duration', default=10, help='Duration in seconds')
+@click.option('--event-type', type=click.Choice(['orders', 'clicks', 'both']), default='both')
+def simulate(rate: int, duration: int, event_type: str):
+    """Simulate event generation for testing
+    
+    Generate fake events and send them to the Events Gateway.
+    """
+    click.echo("="*50)
+    click.echo("Event Simulator")
+    click.echo("="*50)
+    click.echo(f"Rate: {rate} events/sec")
+    click.echo(f"Duration: {duration} seconds")
+    click.echo(f"Event Type: {event_type}")
+    click.echo("="*50)
+    click.echo("\n⚠  Simulator implementation coming in next phase...")
+    click.echo("For now, use curl or Postman to send events to:")
+    click.echo("  - POST http://localhost:8000/api/v1/orders")
+    click.echo("  - POST http://localhost:8000/api/v1/clicks")
+
+
+if __name__ == "__main__":
+    cli()
+
 
 
