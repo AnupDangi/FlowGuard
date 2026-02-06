@@ -39,3 +39,4 @@ pyyaml
 
 ## snowflake
 snowflake-connector-python
+colorama

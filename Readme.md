@@ -85,7 +85,7 @@ End-to-end ETL pipeline simulating Zomato delivery analytics - streaming ingesti
 
 ---
 
-### 6. Apache Flink 
+### 6. Apache Flink
 
 **Location:** `learntools/flink/`
 
@@ -207,5 +207,5 @@ This notion Tracker has everything you need should check it out once.
 
 ---
 
-**Current Status**: Mini Project 2 Completed ✅ | Starting Flink 🚧  
+**Current Status**: Working on Major Project - Zomato Real-Time Data Engineering Platform with Next.js ,fastapi backend,PG sql for db, multi-cluster with multi-borker kafka, and has event gateway which goes to two pipeline for real time processing with flink and batch processing with airflow and pyspark and snowflake for data warehousing.
 **Next**: Flink fundamentals → Major Project kickoff

@@ -13,6 +13,7 @@ Food Catalog API (8001)    Events Gateway API (8000)
 ```
 
 **Separation of concerns:**
+
 - Reference data (food items) → PostgreSQL + Food Catalog Service
 - Event data (orders/clicks) → Events Gateway + Kafka
 
@@ -21,22 +22,26 @@ Food Catalog API (8001)    Events Gateway API (8000)
 ## Quick Start
 
 ### 1. Install Dependencies
+
 ```bash
 pip install -r requirements.txt
 cd zomato-web-app && pnpm install && cd ..
 ```
 
 ### 2. Start Everything (One Command)
+
 ```bash
 ./scripts/start_all.sh
 ```
 
 ### 3. Start Frontend
+
 ```bash
 cd zomato-web-app && pnpm dev
 ```
 
 ### 4. Monitor Events (Real-Time)
+
 ```bash
 # Terminal 1: Event monitor
 python scripts/monitor_events.py
@@ -49,6 +54,7 @@ python scripts/test_send_event.py
 ```
 
 ### 5. Open Application
+
 - Web UI: http://localhost:3000
 - Food Catalog API: http://localhost:8001/docs
 - Events Gateway API: http://localhost:8000/docs
@@ -58,15 +64,15 @@ python scripts/test_send_event.py
 
 ## Scripts
 
-`./scripts/start_all.sh` - Start all services (Docker + Backend)  
-`./scripts/start_catalog.sh` - Start Food Catalog service only  
-`./scripts/monitor_events.py` - Real-time Kafka event monitor  
-`./scripts/monitor_services.sh` - Tail all service logs  
-`./scripts/test_send_event.py` - Send test order event  
-`./scripts/test_catalog_api.py` - Test Food Catalog API  
-`src/main.py start-gateway` - Start Events Gateway (CLI)  
-`src/main.py start-catalog` - Start Food Catalog (CLI)  
-`src/main.py health-check` - Check Kafka status
+`./scripts/start_all.sh` - Start all services (bash script)  
+`./scripts/start_catalog.sh` - Start Food Catalog only (bash script)  
+`python scripts/monitor_events.py` - Real-time Kafka event monitor  
+`./scripts/monitor_services.sh` - Tail all service logs (bash script)  
+`python scripts/test_send_event.py` - Send test order event  
+`python scripts/test_catalog_api.py` - Test Food Catalog API  
+`python src/main.py start-gateway` - Start Events Gateway (CLI)  
+`python src/main.py start-catalog` - Start Food Catalog (CLI)  
+`python src/main.py health-check` - Check Kafka status
 
 ---
 
