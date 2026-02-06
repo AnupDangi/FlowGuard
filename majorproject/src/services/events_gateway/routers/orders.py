@@ -6,12 +6,13 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from typing import Dict, Any
 
-from src.shared.schemas.events import OrderEvent, BaseEventResponse
+from src.shared.schemas.events import OrderEvent
 from src.shared.kafka.topics import TopicName
 from src.services.events_gateway.producers.kafka_producer import (
     get_producer,
     KafkaProducerError
 )
+from src.services.events_gateway.db import get_db_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -27,67 +28,77 @@ router = APIRouter(
 
 @router.post(
     "/",
-    response_model=BaseEventResponse,
-    status_code=status.HTTP_202_ACCEPTED,
+    status_code=status.HTTP_201_CREATED,
     summary="Submit Order Event",
-    description="Submit a user order event to be processed by the pipeline"
+    description="Submit a user order event - stored in DB then emitted to Kafka"
 )
-async def create_order_event(order: OrderEvent) -> BaseEventResponse:
+async def create_order_event(order: OrderEvent) -> Dict[str, Any]:
     """
     Submit an order event to the events gateway.
     
-    The event will be validated, enriched with metadata, and published to Kafka
-    for downstream processing.
-    
-    **Event Flow:**
-    1. Validate event schema
-    2. Generate event_id if not provided
-    3. Publish to raw.orders.v1 Kafka topic
-    4. Return acknowledgment to client
+    **Flow:**
+    1. Generate UUID for order_id (server-side)
+    2. Insert into PostgreSQL orders table
+    3. If DB insert succeeds, emit to Kafka
+    4. Return order_id to client
     """
     try:
-        # Generate event_id if not provided
-        if not order.event_id or order.event_id == "string":
-            order.event_id = f"ord_{uuid.uuid4().hex[:12]}"
+        # Generate server-side IDs
+        order_id = str(uuid.uuid4())
+        event_id = f"evt_{uuid.uuid4().hex[:12]}"
         
         # Ensure timestamp is set
         if not order.timestamp:
             order.timestamp = datetime.utcnow()
         
-        # Convert to dict for Kafka
-        event_dict = order.model_dump(mode='json')
+        # Step 1: Insert into database (source of truth)
+        with get_db_cursor() as cursor:
+            insert_query = """
+                INSERT INTO orders (order_id, user_id, item_id, item_name, price, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """
+            cursor.execute(insert_query, (
+                order_id,
+                order.user_id,
+                order.item_id,
+                order.item_name or f"Item {order.item_id}",
+                order.price or 0.0,
+                'confirmed',
+                order.timestamp
+            ))
         
-        # Get Kafka producer
+        logger.info(f"✅ Order {order_id} inserted to database")
+        
+        # Step 2: Emit to Kafka (only after DB success)
+        order.order_id = order_id
+        order.event_id = event_id
+        
+        event_dict = order.model_dump(mode='json')
         producer = get_producer()
         
-        # Use user_id as partition key for ordered processing per user
-        partition_key = str(order.user_id)
-        
-        # Add headers
         headers = {
             "event_type": "order",
             "source": "events_gateway",
             "user_id": str(order.user_id)
         }
         
-        # Send to Kafka
         producer.send_event(
             topic=TopicName.RAW_ORDERS,
             event=event_dict,
-            key=partition_key,
+            key=str(order.user_id),
             headers=headers
         )
         
-        logger.info(
-            f"Order event accepted: event_id={order.event_id}, "
-            f"user_id={order.user_id}, order_id={order.order_id}"
-        )
+        logger.info(f"✅ Order {order_id} event emitted to Kafka")
         
-        return BaseEventResponse(
-            success=True,
-            message="Order event accepted for processing",
-            event_id=order.event_id
-        )
+        # Return order details to client
+        return {
+            "success": True,
+            "order_id": order_id,
+            "event_id": event_id,
+            "status": "confirmed",
+            "message": "Order placed successfully"
+        }
         
     except KafkaProducerError as e:
         logger.error(f"Kafka producer error: {e}")

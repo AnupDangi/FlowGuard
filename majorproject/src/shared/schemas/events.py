@@ -31,7 +31,7 @@ class OrderEvent(BaseModel):
     
     This event is triggered when a user places an order on the platform.
     """
-    event_id: str = Field(..., description="Unique event identifier")
+    event_id: Optional[str] = Field(None, description="Unique event identifier (server-generated if not provided)")
     event_type: str = Field(default=EventType.ORDER, description="Event type")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp")
     
@@ -39,7 +39,7 @@ class OrderEvent(BaseModel):
     user_id: int = Field(..., description="User identifier", gt=0)
     
     # Order Information
-    order_id: str = Field(..., description="Order identifier")
+    order_id: Optional[str] = Field(None, description="Order identifier (server-generated if not provided)")
     order_type: OrderEventType = Field(default=OrderEventType.PLACED, description="Order event subtype")
     
     # Item Information

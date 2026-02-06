@@ -19,6 +19,10 @@ from src.services.events_gateway.producers.kafka_producer import (
     close_producer,
     check_kafka_connection
 )
+from src.services.events_gateway.db import (
+    init_connection_pool,
+    close_connection_pool
+)
 
 # Load environment variables
 load_dotenv()
@@ -41,6 +45,10 @@ async def lifespan(app: FastAPI):
     logger.info("="*50)
     logger.info("FlowGuard Events Gateway Starting...")
     logger.info("="*50)
+    
+    # Initialize database connection pool
+    logger.info("Initializing database connection pool...")
+    init_connection_pool()
     
     # Check Kafka connection
     logger.info("Checking Kafka connection...")
@@ -69,6 +77,12 @@ async def lifespan(app: FastAPI):
     try:
         close_producer()
         logger.info("✓ Kafka producer closed successfully")
+    except Exception as e:
+        logger.error(f"✗ Error closing Kafka producer: {e}")
+    
+    try:
+        close_connection_pool()
+        logger.info("✓ Database connection pool closed successfully")
     except Exception as e:
         logger.error(f"✗ Error closing producer: {e}")
     
