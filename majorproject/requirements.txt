@@ -7,6 +7,9 @@ pydantic-settings
 # Kafka Client
 confluent-kafka
 
+# PostgreSQL Client
+psycopg2-binary
+
 # Configuration & Environment
 python-dotenv
 pyyaml

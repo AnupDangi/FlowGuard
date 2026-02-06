@@ -59,6 +59,31 @@ def start_gateway(host: str, port: int, reload: bool):
 
 
 @cli.command()
+@click.option('--host', default='0.0.0.0', help='Host to bind to')
+@click.option('--port', default=8001, help='Port to bind to')
+@click.option('--reload', is_flag=True, help='Enable auto-reload')
+def start_catalog(host: str, port: int, reload: bool):
+    """Start the Food Catalog service"""
+    import uvicorn
+    
+    click.echo("="*50)
+    click.echo("Starting FlowGuard Food Catalog Service")
+    click.echo("="*50)
+    click.echo(f"Host: {host}")
+    click.echo(f"Port: {port}")
+    click.echo(f"Reload: {reload}")
+    click.echo("="*50)
+    
+    uvicorn.run(
+        "src.services.food_catalog.main:app",
+        host=host,
+        port=port,
+        reload=reload,
+        log_level="info"
+    )
+
+
+@cli.command()
 def health_check():
     """Check health of all FlowGuard components"""
     from src.services.events_gateway.producers.kafka_producer import check_kafka_connection
