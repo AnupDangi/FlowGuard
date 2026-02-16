@@ -1,7 +1,7 @@
 """Orders Router - Handle order event submissions"""
 
 import logging
-import uuid
+from uuid6 import uuid7
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from typing import Dict, Any
@@ -43,9 +43,9 @@ async def create_order_event(order: OrderEvent) -> Dict[str, Any]:
     4. Return order_id to client
     """
     try:
-        # Generate server-side IDs
-        order_id = str(uuid.uuid4())
-        event_id = f"evt_{uuid.uuid4().hex[:12]}"
+        # Generate server-side IDs (UUID v7 for time-ordering)
+        order_id = str(uuid7())
+        event_id = f"evt_{uuid7().hex[:12]}"
         
         # Ensure timestamp is set
         if not order.timestamp:

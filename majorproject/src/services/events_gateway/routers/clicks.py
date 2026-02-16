@@ -1,7 +1,7 @@
 """Clicks Router - Handle click and impression event submissions"""
 
 import logging
-import uuid
+from uuid6 import uuid7
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from typing import Dict, Any
@@ -50,9 +50,9 @@ async def create_click_event(click: ClickEvent) -> BaseEventResponse:
     - Ad impression: is_click=False
     """
     try:
-        # Generate event_id if not provided
+        # Generate event_id if not provided (UUID v7 for time-ordering)
         if not click.event_id or click.event_id == "string":
-            click.event_id = f"clk_{uuid.uuid4().hex[:12]}"
+            click.event_id = f"clk_{uuid7().hex[:12]}"
         
         # Ensure timestamp is set
         if not click.timestamp:

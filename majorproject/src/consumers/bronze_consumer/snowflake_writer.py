@@ -116,44 +116,33 @@ class SnowflakeWriter:
         
         try:
             with self._get_cursor() as cursor:
-                # Use MERGE for idempotency (prevents duplicates on consumer restart)
-                merge_query = """
-                MERGE INTO ORDERS_RAW AS target
-                USING (
-                    SELECT 
-                        %s AS EVENT_ID,
-                        %s AS ORDER_ID,
-                        %s AS USER_ID,
-                        %s AS ITEM_ID,
-                        %s AS ITEM_NAME,
-                        %s AS PRICE,
-                        %s AS STATUS,
-                        %s AS EVENT_TIMESTAMP,
-                        PARSE_JSON(%s) AS RAW_EVENT,
-                        %s AS EVENT_TYPE,
-                        %s AS SCHEMA_VERSION,
-                        %s AS SOURCE_TOPIC,
-                        %s AS PRODUCER_SERVICE,
-                        %s AS INGESTION_ID
-                ) AS source
-                ON target.INGESTION_ID = source.INGESTION_ID
-                WHEN NOT MATCHED THEN
-                    INSERT (
-                        EVENT_ID, ORDER_ID, USER_ID, ITEM_ID, ITEM_NAME, PRICE, STATUS,
-                        EVENT_TIMESTAMP, RAW_EVENT, EVENT_TYPE, SCHEMA_VERSION, 
-                        SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
+                # Step 1: Create temporary table
+                cursor.execute("""
+                    CREATE TEMPORARY TABLE ORDERS_STAGING (
+                        EVENT_ID VARCHAR,
+                        ORDER_ID VARCHAR,
+                        USER_ID VARCHAR,
+                        ITEM_ID VARCHAR,
+                        ITEM_NAME VARCHAR,
+                        PRICE FLOAT,
+                        STATUS VARCHAR,
+                        EVENT_TIMESTAMP TIMESTAMP_NTZ,
+                        RAW_EVENT VARIANT,
+                        EVENT_TYPE VARCHAR,
+                        SCHEMA_VERSION VARCHAR,
+                        SOURCE_TOPIC VARCHAR,
+                        PRODUCER_SERVICE VARCHAR,
+                        INGESTION_ID VARCHAR PRIMARY KEY
                     )
-                    VALUES (
-                        source.EVENT_ID, source.ORDER_ID, source.USER_ID, source.ITEM_ID,
-                        source.ITEM_NAME, source.PRICE, source.STATUS, source.EVENT_TIMESTAMP,
-                        source.RAW_EVENT, source.EVENT_TYPE, source.SCHEMA_VERSION,
-                        source.SOURCE_TOPIC, source.PRODUCER_SERVICE, source.INGESTION_ID
-                    )
+                """)
+                
+                # Step 2: Bulk insert into staging table
+                insert_staging = """
+                    INSERT INTO ORDERS_STAGING 
+                    SELECT %s, %s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, %s, %s, %s, %s
                 """
                 
-                # Execute merges one by one (Snowflake doesn't support bulk MERGE easily)
-                inserted = 0
-                skipped = 0
+                rows = []
                 for event, metadata in events:
                     row = (
                         event.get('event_id'),
@@ -164,19 +153,42 @@ class SnowflakeWriter:
                         event.get('price'),
                         event.get('status', 'confirmed'),
                         event.get('timestamp'),
-                        json.dumps(event),  # JSON string for PARSE_JSON
-                        event.get('event_type', 'order'),  # EVENT_TYPE
-                        metadata.get('schema_version'),  # SCHEMA_VERSION
-                        metadata.get('source_topic'),  # SOURCE_TOPIC
-                        metadata.get('producer_service'),  # PRODUCER_SERVICE
-                        metadata.get('ingestion_id')  # INGESTION_ID (idempotency key)
+                        json.dumps(event),
+                        event.get('event_type', 'order'),
+                        metadata.get('schema_version'),
+                        metadata.get('source_topic'),
+                        metadata.get('producer_service'),
+                        metadata.get('ingestion_id')
                     )
-                    cursor.execute(merge_query, row)
-                    rows_affected = cursor.rowcount
-                    if rows_affected > 0:
-                        inserted += 1
-                    else:
-                        skipped += 1
+                    rows.append(row)
+                
+                # Bulk insert all rows
+                cursor.executemany(insert_staging, rows)
+                
+                # Step 3: Single MERGE from staging to target
+                merge_query = """
+                    MERGE INTO ORDERS_RAW AS target
+                    USING ORDERS_STAGING AS source
+                    ON target.INGESTION_ID = source.INGESTION_ID
+                    WHEN NOT MATCHED THEN
+                        INSERT (
+                            EVENT_ID, ORDER_ID, USER_ID, ITEM_ID, ITEM_NAME, PRICE, STATUS,
+                            EVENT_TIMESTAMP, RAW_EVENT, EVENT_TYPE, SCHEMA_VERSION, 
+                            SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
+                        )
+                        VALUES (
+                            source.EVENT_ID, source.ORDER_ID, source.USER_ID, source.ITEM_ID,
+                            source.ITEM_NAME, source.PRICE, source.STATUS, source.EVENT_TIMESTAMP,
+                            source.RAW_EVENT, source.EVENT_TYPE, source.SCHEMA_VERSION,
+                            source.SOURCE_TOPIC, source.PRODUCER_SERVICE, source.INGESTION_ID
+                        )
+                """
+                cursor.execute(merge_query)
+                inserted = cursor.rowcount
+                skipped = len(events) - inserted
+                
+                # Step 4: Drop staging table
+                cursor.execute("DROP TABLE ORDERS_STAGING")
                 
                 if skipped > 0:
                     logger.info(f"Merged {inserted} orders (skipped {skipped} duplicates)")
@@ -198,7 +210,7 @@ class SnowflakeWriter:
             events: List of (event_dict, metadata_dict) tuples
             
         Returns:
-            int: Number of rows inserted/updated
+            int: Number of rows inserted
             
         Raises:
             SnowflakeWriterError: If write fails
@@ -208,41 +220,30 @@ class SnowflakeWriter:
         
         try:
             with self._get_cursor() as cursor:
-                # Use MERGE for idempotency (prevents duplicates on consumer restart)
-                merge_query = """
-                MERGE INTO CLICKS_RAW AS target
-                USING (
-                    SELECT
-                        %s AS EVENT_ID,
-                        %s AS USER_ID,
-                        %s AS EVENT_TYPE,
-                        %s AS ITEM_ID,
-                        %s AS SESSION_ID,
-                        %s AS EVENT_TIMESTAMP,
-                        PARSE_JSON(%s) AS RAW_EVENT,
-                        %s AS SCHEMA_VERSION,
-                        %s AS SOURCE_TOPIC,
-                        %s AS PRODUCER_SERVICE,
-                        %s AS INGESTION_ID
-                ) AS source
-                ON target.INGESTION_ID = source.INGESTION_ID
-                WHEN NOT MATCHED THEN
-                    INSERT (
-                        EVENT_ID, USER_ID, EVENT_TYPE, ITEM_ID, SESSION_ID,
-                        EVENT_TIMESTAMP, RAW_EVENT, SCHEMA_VERSION,
-                        SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
+                # Step 1: Create temporary table
+                cursor.execute("""
+                    CREATE TEMPORARY TABLE CLICKS_STAGING (
+                        EVENT_ID VARCHAR,
+                        USER_ID VARCHAR,
+                        EVENT_TYPE VARCHAR,
+                        ITEM_ID VARCHAR,
+                        SESSION_ID VARCHAR,
+                        EVENT_TIMESTAMP TIMESTAMP_NTZ,
+                        RAW_EVENT VARIANT,
+                        SCHEMA_VERSION VARCHAR,
+                        SOURCE_TOPIC VARCHAR,
+                        PRODUCER_SERVICE VARCHAR,
+                        INGESTION_ID VARCHAR PRIMARY KEY
                     )
-                    VALUES (
-                        source.EVENT_ID, source.USER_ID, source.EVENT_TYPE,
-                        source.ITEM_ID, source.SESSION_ID, source.EVENT_TIMESTAMP,
-                        source.RAW_EVENT, source.SCHEMA_VERSION, source.SOURCE_TOPIC,
-                        source.PRODUCER_SERVICE, source.INGESTION_ID
-                    )
+                """)
+                
+                # Step 2: Bulk insert into staging table
+                insert_staging = """
+                    INSERT INTO CLICKS_STAGING 
+                    SELECT %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, %s, %s, %s
                 """
                 
-                # Execute merges one by one
-                inserted = 0
-                skipped = 0
+                rows = []
                 for event, metadata in events:
                     row = (
                         event.get('event_id'),
@@ -251,18 +252,41 @@ class SnowflakeWriter:
                         event.get('item_id'),
                         event.get('session_id'),
                         event.get('timestamp'),
-                        json.dumps(event),  # JSON string for PARSE_JSON
-                        metadata.get('schema_version'),  # SCHEMA_VERSION
-                        metadata.get('source_topic'),  # SOURCE_TOPIC
-                        metadata.get('producer_service'),  # PRODUCER_SERVICE
-                        metadata.get('ingestion_id')  # INGESTION_ID (idempotency key)
+                        json.dumps(event),
+                        metadata.get('schema_version'),
+                        metadata.get('source_topic'),
+                        metadata.get('producer_service'),
+                        metadata.get('ingestion_id')
                     )
-                    cursor.execute(merge_query, row)
-                    rows_affected = cursor.rowcount
-                    if rows_affected > 0:
-                        inserted += 1
-                    else:
-                        skipped += 1
+                    rows.append(row)
+                
+                # Bulk insert all rows
+                cursor.executemany(insert_staging, rows)
+                
+                # Step 3: Single MERGE from staging to target (now with idempotency!)
+                merge_query = """
+                    MERGE INTO CLICKS_RAW AS target
+                    USING CLICKS_STAGING AS source
+                    ON target.INGESTION_ID = source.INGESTION_ID
+                    WHEN NOT MATCHED THEN
+                        INSERT (
+                            EVENT_ID, USER_ID, EVENT_TYPE, ITEM_ID, SESSION_ID,
+                            EVENT_TIMESTAMP, RAW_EVENT, SCHEMA_VERSION,
+                            SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
+                        )
+                        VALUES (
+                            source.EVENT_ID, source.USER_ID, source.EVENT_TYPE,
+                            source.ITEM_ID, source.SESSION_ID, source.EVENT_TIMESTAMP,
+                            source.RAW_EVENT, source.SCHEMA_VERSION, source.SOURCE_TOPIC,
+                            source.PRODUCER_SERVICE, source.INGESTION_ID
+                        )
+                """
+                cursor.execute(merge_query)
+                inserted = cursor.rowcount
+                skipped = len(events) - inserted
+                
+                # Step 4: Drop staging table
+                cursor.execute("DROP TABLE CLICKS_STAGING")
                 
                 if skipped > 0:
                     logger.info(f"Merged {inserted} clicks (skipped {skipped} duplicates)")

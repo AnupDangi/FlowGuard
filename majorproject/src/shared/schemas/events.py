@@ -89,9 +89,9 @@ class ClickEvent(BaseModel):
     
     This event is triggered when a user clicks on an ad or sees an impression.
     """
-    event_id: str = Field(..., description="Unique event identifier")
+    event_id: Optional[str] = Field(None, description="Unique event identifier (server-generated if not provided)")
     event_type: str = Field(default=EventType.CLICK, description="Event type")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp")
+    timestamp: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Event timestamp")
     
     # User Information
     user_id: int = Field(..., description="User identifier", gt=0)
