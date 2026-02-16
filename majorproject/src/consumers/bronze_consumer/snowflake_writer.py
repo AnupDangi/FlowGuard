@@ -100,13 +100,13 @@ class SnowflakeWriter:
                 cursor.close()
     
     def write_orders_batch(self, events: List[tuple]) -> int:
-        """Write batch of order events to ORDERS_RAW table
+        """Write batch of order events to ORDERS_RAW table with idempotency
         
         Args:
             events: List of (event_dict, metadata_dict) tuples
             
         Returns:
-            int: Number of rows inserted
+            int: Number of rows inserted/updated
             
         Raises:
             SnowflakeWriterError: If write fails
@@ -116,28 +116,44 @@ class SnowflakeWriter:
         
         try:
             with self._get_cursor() as cursor:
-                # Use INSERT...SELECT with PARSE_JSON (only syntax that works)
-                insert_query = """
-                INSERT INTO ORDERS_RAW (
-                    EVENT_ID,
-                    ORDER_ID,
-                    USER_ID,
-                    ITEM_ID,
-                    ITEM_NAME,
-                    PRICE,
-                    STATUS,
-                    EVENT_TIMESTAMP,
-                    RAW_EVENT,
-                    EVENT_TYPE,
-                    SCHEMA_VERSION,
-                    SOURCE_TOPIC,
-                    PRODUCER_SERVICE,
-                    INGESTION_ID
-                ) SELECT %s, %s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, %s, %s, %s, %s
+                # Use MERGE for idempotency (prevents duplicates on consumer restart)
+                merge_query = """
+                MERGE INTO ORDERS_RAW AS target
+                USING (
+                    SELECT 
+                        %s AS EVENT_ID,
+                        %s AS ORDER_ID,
+                        %s AS USER_ID,
+                        %s AS ITEM_ID,
+                        %s AS ITEM_NAME,
+                        %s AS PRICE,
+                        %s AS STATUS,
+                        %s AS EVENT_TIMESTAMP,
+                        PARSE_JSON(%s) AS RAW_EVENT,
+                        %s AS EVENT_TYPE,
+                        %s AS SCHEMA_VERSION,
+                        %s AS SOURCE_TOPIC,
+                        %s AS PRODUCER_SERVICE,
+                        %s AS INGESTION_ID
+                ) AS source
+                ON target.INGESTION_ID = source.INGESTION_ID
+                WHEN NOT MATCHED THEN
+                    INSERT (
+                        EVENT_ID, ORDER_ID, USER_ID, ITEM_ID, ITEM_NAME, PRICE, STATUS,
+                        EVENT_TIMESTAMP, RAW_EVENT, EVENT_TYPE, SCHEMA_VERSION, 
+                        SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
+                    )
+                    VALUES (
+                        source.EVENT_ID, source.ORDER_ID, source.USER_ID, source.ITEM_ID,
+                        source.ITEM_NAME, source.PRICE, source.STATUS, source.EVENT_TIMESTAMP,
+                        source.RAW_EVENT, source.EVENT_TYPE, source.SCHEMA_VERSION,
+                        source.SOURCE_TOPIC, source.PRODUCER_SERVICE, source.INGESTION_ID
+                    )
                 """
                 
-                # Execute inserts one by one
+                # Execute merges one by one (Snowflake doesn't support bulk MERGE easily)
                 inserted = 0
+                skipped = 0
                 for event, metadata in events:
                     row = (
                         event.get('event_id'),
@@ -153,12 +169,19 @@ class SnowflakeWriter:
                         metadata.get('schema_version'),  # SCHEMA_VERSION
                         metadata.get('source_topic'),  # SOURCE_TOPIC
                         metadata.get('producer_service'),  # PRODUCER_SERVICE
-                        metadata.get('ingestion_id')  # INGESTION_ID
+                        metadata.get('ingestion_id')  # INGESTION_ID (idempotency key)
                     )
-                    cursor.execute(insert_query, row)
-                    inserted += cursor.rowcount
+                    cursor.execute(merge_query, row)
+                    rows_affected = cursor.rowcount
+                    if rows_affected > 0:
+                        inserted += 1
+                    else:
+                        skipped += 1
                 
-                logger.info(f"Inserted {inserted} orders into Snowflake")
+                if skipped > 0:
+                    logger.info(f"Merged {inserted} orders (skipped {skipped} duplicates)")
+                else:
+                    logger.info(f"Inserted {inserted} orders into Snowflake")
                 return inserted
                 
         except (ProgrammingError, DatabaseError) as e:
@@ -169,13 +192,13 @@ class SnowflakeWriter:
             raise SnowflakeWriterError(f"Unexpected error: {e}")
     
     def write_clicks_batch(self, events: List[tuple]) -> int:
-        """Write batch of click events to CLICKS_RAW table
+        """Write batch of click events to CLICKS_RAW table with idempotency
         
         Args:
             events: List of (event_dict, metadata_dict) tuples
             
         Returns:
-            int: Number of rows inserted
+            int: Number of rows inserted/updated
             
         Raises:
             SnowflakeWriterError: If write fails
@@ -185,25 +208,41 @@ class SnowflakeWriter:
         
         try:
             with self._get_cursor() as cursor:
-                # Use INSERT...SELECT with PARSE_JSON (only syntax that works)
-                insert_query = """
-                INSERT INTO CLICKS_RAW (
-                    EVENT_ID,
-                    USER_ID,
-                    EVENT_TYPE,
-                    ITEM_ID,
-                    SESSION_ID,
-                    EVENT_TIMESTAMP,
-                    RAW_EVENT,
-                    SCHEMA_VERSION,
-                    SOURCE_TOPIC,
-                    PRODUCER_SERVICE,
-                    INGESTION_ID
-                ) SELECT %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, %s, %s, %s
+                # Use MERGE for idempotency (prevents duplicates on consumer restart)
+                merge_query = """
+                MERGE INTO CLICKS_RAW AS target
+                USING (
+                    SELECT
+                        %s AS EVENT_ID,
+                        %s AS USER_ID,
+                        %s AS EVENT_TYPE,
+                        %s AS ITEM_ID,
+                        %s AS SESSION_ID,
+                        %s AS EVENT_TIMESTAMP,
+                        PARSE_JSON(%s) AS RAW_EVENT,
+                        %s AS SCHEMA_VERSION,
+                        %s AS SOURCE_TOPIC,
+                        %s AS PRODUCER_SERVICE,
+                        %s AS INGESTION_ID
+                ) AS source
+                ON target.INGESTION_ID = source.INGESTION_ID
+                WHEN NOT MATCHED THEN
+                    INSERT (
+                        EVENT_ID, USER_ID, EVENT_TYPE, ITEM_ID, SESSION_ID,
+                        EVENT_TIMESTAMP, RAW_EVENT, SCHEMA_VERSION,
+                        SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
+                    )
+                    VALUES (
+                        source.EVENT_ID, source.USER_ID, source.EVENT_TYPE,
+                        source.ITEM_ID, source.SESSION_ID, source.EVENT_TIMESTAMP,
+                        source.RAW_EVENT, source.SCHEMA_VERSION, source.SOURCE_TOPIC,
+                        source.PRODUCER_SERVICE, source.INGESTION_ID
+                    )
                 """
                 
-                # Execute inserts one by one
+                # Execute merges one by one
                 inserted = 0
+                skipped = 0
                 for event, metadata in events:
                     row = (
                         event.get('event_id'),
@@ -216,12 +255,19 @@ class SnowflakeWriter:
                         metadata.get('schema_version'),  # SCHEMA_VERSION
                         metadata.get('source_topic'),  # SOURCE_TOPIC
                         metadata.get('producer_service'),  # PRODUCER_SERVICE
-                        metadata.get('ingestion_id')  # INGESTION_ID
+                        metadata.get('ingestion_id')  # INGESTION_ID (idempotency key)
                     )
-                    cursor.execute(insert_query, row)
-                    inserted += cursor.rowcount
+                    cursor.execute(merge_query, row)
+                    rows_affected = cursor.rowcount
+                    if rows_affected > 0:
+                        inserted += 1
+                    else:
+                        skipped += 1
                 
-                logger.info(f"Inserted {inserted} clicks into Snowflake")
+                if skipped > 0:
+                    logger.info(f"Merged {inserted} clicks (skipped {skipped} duplicates)")
+                else:
+                    logger.info(f"Inserted {inserted} clicks into Snowflake")
                 return inserted
                 
         except (ProgrammingError, DatabaseError) as e:
