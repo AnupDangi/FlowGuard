@@ -9,7 +9,7 @@ from psycopg2.extras import RealDictCursor
 # Database configuration
 DB_CONFIG = {
     "host": "localhost",
-    "port": 5432,
+    "port": 5433,
     "database": "food_catalog",
     "user": "flowguard",
     "password": "flowguard123"
