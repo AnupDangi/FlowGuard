@@ -126,23 +126,14 @@ class SnowflakeWriter:
                 cursor.close()
     
     def write_orders_batch(self, events: List[tuple]) -> int:
-        """Write batch of order events to ORDERS_RAW table with idempotency
-        
-        Args:
-            events: List of (event_dict, metadata_dict) tuples
-            
-        Returns:
-            int: Number of rows inserted/updated
-            
-        Raises:
-            SnowflakeWriterError: If write fails
-        """
+        """Write batch of order events to ORDERS_RAW table with idempotency"""
         if not events:
             return 0
-        
+
         try:
             with self._get_cursor() as cursor:
-                # Step 1: Create temporary table
+                # Step 1: Staging table — RAW_EVENT stored as VARCHAR, cast to VARIANT in MERGE
+                # executemany() uses server-side binding which does NOT support PARSE_JSON(%s)
                 cursor.execute("""
                     CREATE OR REPLACE TEMPORARY TABLE ORDERS_STAGING (
                         EVENT_ID VARCHAR,
@@ -154,7 +145,7 @@ class SnowflakeWriter:
                         STATUS VARCHAR,
                         EVENT_TIMESTAMP TIMESTAMP_NTZ,
                         PARTITION_DATE DATE,
-                        RAW_EVENT VARIANT,
+                        RAW_EVENT VARCHAR,
                         EVENT_TYPE VARCHAR,
                         SCHEMA_VERSION VARCHAR,
                         SOURCE_TOPIC VARCHAR,
@@ -162,16 +153,16 @@ class SnowflakeWriter:
                         INGESTION_ID VARCHAR PRIMARY KEY
                     )
                 """)
-                
-                # Step 2: Bulk insert into staging table
+
+                # Step 2: Bulk insert — all %s are plain scalars (no function calls)
                 insert_staging = """
-                    INSERT INTO ORDERS_STAGING VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, %s, %s, %s, %s)
+                    INSERT INTO ORDERS_STAGING VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """
-                
+
                 rows = []
                 for event, metadata in events:
                     ts = _parse_timestamp(event.get('timestamp'))
-                    row = (
+                    rows.append((
                         event.get('event_id'),
                         event.get('order_id'),
                         str(event.get('user_id')) if event.get('user_id') is not None else None,
@@ -179,76 +170,64 @@ class SnowflakeWriter:
                         event.get('item_name'),
                         event.get('price'),
                         event.get('status', 'confirmed'),
-                        ts,                          # datetime object → TIMESTAMP_NTZ (no NULL)
-                        ts.date() if ts else None,   # PARTITION_DATE for Silver ETL queries
-                        json.dumps(event),
+                        ts,
+                        ts.date() if ts else None,
+                        json.dumps(event),           # VARCHAR — cast to VARIANT in MERGE below
                         event.get('event_type', 'order'),
                         metadata.get('schema_version'),
                         metadata.get('source_topic'),
                         metadata.get('producer_service'),
                         metadata.get('ingestion_id')
-                    )
-                    rows.append(row)
-                
-                # Bulk insert all rows
+                    ))
+
                 cursor.executemany(insert_staging, rows)
-                
-                # Step 3: Single MERGE from staging to target
-                merge_query = """
+
+                # Step 3: MERGE — TRY_PARSE_JSON casts VARCHAR → VARIANT safely
+                cursor.execute("""
                     MERGE INTO ORDERS_RAW AS target
                     USING ORDERS_STAGING AS source
                     ON target.INGESTION_ID = source.INGESTION_ID
                     WHEN NOT MATCHED THEN
                         INSERT (
                             EVENT_ID, ORDER_ID, USER_ID, ITEM_ID, ITEM_NAME, PRICE, STATUS,
-                            EVENT_TIMESTAMP, PARTITION_DATE, RAW_EVENT, EVENT_TYPE, SCHEMA_VERSION,
-                            SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
+                            EVENT_TIMESTAMP, PARTITION_DATE, RAW_EVENT, EVENT_TYPE,
+                            SCHEMA_VERSION, SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
                         )
                         VALUES (
                             source.EVENT_ID, source.ORDER_ID, source.USER_ID, source.ITEM_ID,
                             source.ITEM_NAME, source.PRICE, source.STATUS, source.EVENT_TIMESTAMP,
-                            source.PARTITION_DATE, source.RAW_EVENT, source.EVENT_TYPE, source.SCHEMA_VERSION,
+                            source.PARTITION_DATE, TRY_PARSE_JSON(source.RAW_EVENT),
+                            source.EVENT_TYPE, source.SCHEMA_VERSION,
                             source.SOURCE_TOPIC, source.PRODUCER_SERVICE, source.INGESTION_ID
                         )
-                """
-                cursor.execute(merge_query)
+                """)
                 inserted = cursor.rowcount
                 skipped = len(events) - inserted
-                
-                # Step 4: Drop staging table
-                cursor.execute("DROP TABLE ORDERS_STAGING")
-                
+
+                cursor.execute("DROP TABLE IF EXISTS ORDERS_STAGING")
+
                 if skipped > 0:
                     logger.info(f"Merged {inserted} orders (skipped {skipped} duplicates)")
                 else:
                     logger.info(f"Inserted {inserted} orders into Snowflake")
                 return inserted
-                
+
         except (ProgrammingError, DatabaseError) as e:
             logger.error(f"Snowflake write error: {e}")
             raise SnowflakeWriterError(f"Write failed: {e}")
         except Exception as e:
             logger.error(f"Unexpected error writing to Snowflake: {e}")
             raise SnowflakeWriterError(f"Unexpected error: {e}")
+
     
     def write_clicks_batch(self, events: List[tuple]) -> int:
-        """Write batch of click events to CLICKS_RAW table with idempotency
-        
-        Args:
-            events: List of (event_dict, metadata_dict) tuples
-            
-        Returns:
-            int: Number of rows inserted
-            
-        Raises:
-            SnowflakeWriterError: If write fails
-        """
+        """Write batch of click events to CLICKS_RAW table with idempotency"""
         if not events:
             return 0
-        
+
         try:
             with self._get_cursor() as cursor:
-                # Step 1: Create temporary table
+                # Step 1: Staging table — RAW_EVENT as VARCHAR, cast to VARIANT in MERGE
                 cursor.execute("""
                     CREATE OR REPLACE TEMPORARY TABLE CLICKS_STAGING (
                         EVENT_ID VARCHAR,
@@ -258,78 +237,75 @@ class SnowflakeWriter:
                         SESSION_ID VARCHAR,
                         EVENT_TIMESTAMP TIMESTAMP_NTZ,
                         PARTITION_DATE DATE,
-                        RAW_EVENT VARIANT,
+                        RAW_EVENT VARCHAR,
                         SCHEMA_VERSION VARCHAR,
                         SOURCE_TOPIC VARCHAR,
                         PRODUCER_SERVICE VARCHAR,
                         INGESTION_ID VARCHAR PRIMARY KEY
                     )
                 """)
-                
-                # Step 2: Bulk insert into staging table
+
                 insert_staging = """
-                    INSERT INTO CLICKS_STAGING VALUES (%s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, %s, %s, %s)
+                    INSERT INTO CLICKS_STAGING VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """
-                
+
                 rows = []
                 for event, metadata in events:
                     ts = _parse_timestamp(event.get('timestamp'))
-                    row = (
+                    rows.append((
                         event.get('event_id'),
                         str(event.get('user_id')) if event.get('user_id') is not None else None,
                         event.get('event_type'),
                         str(event.get('item_id')) if event.get('item_id') is not None else None,
                         event.get('session_id'),
-                        ts,                          # datetime object → TIMESTAMP_NTZ (no NULL)
-                        ts.date() if ts else None,   # PARTITION_DATE for Silver ETL queries
-                        json.dumps(event),
+                        ts,
+                        ts.date() if ts else None,
+                        json.dumps(event),           # VARCHAR — cast to VARIANT in MERGE
                         metadata.get('schema_version'),
                         metadata.get('source_topic'),
                         metadata.get('producer_service'),
                         metadata.get('ingestion_id')
-                    )
-                    rows.append(row)
-                
-                # Bulk insert all rows
+                    ))
+
                 cursor.executemany(insert_staging, rows)
-                
-                # Step 3: Single MERGE from staging to target (idempotent via INGESTION_ID)
-                merge_query = """
+
+                # Step 3: MERGE — TRY_PARSE_JSON casts VARCHAR → VARIANT
+                cursor.execute("""
                     MERGE INTO CLICKS_RAW AS target
                     USING CLICKS_STAGING AS source
                     ON target.INGESTION_ID = source.INGESTION_ID
                     WHEN NOT MATCHED THEN
                         INSERT (
                             EVENT_ID, USER_ID, EVENT_TYPE, ITEM_ID, SESSION_ID,
-                            EVENT_TIMESTAMP, PARTITION_DATE, RAW_EVENT, SCHEMA_VERSION,
-                            SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
+                            EVENT_TIMESTAMP, PARTITION_DATE, RAW_EVENT,
+                            SCHEMA_VERSION, SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
                         )
                         VALUES (
                             source.EVENT_ID, source.USER_ID, source.EVENT_TYPE,
                             source.ITEM_ID, source.SESSION_ID, source.EVENT_TIMESTAMP,
-                            source.PARTITION_DATE, source.RAW_EVENT, source.SCHEMA_VERSION,
-                            source.SOURCE_TOPIC, source.PRODUCER_SERVICE, source.INGESTION_ID
+                            source.PARTITION_DATE, TRY_PARSE_JSON(source.RAW_EVENT),
+                            source.SCHEMA_VERSION, source.SOURCE_TOPIC,
+                            source.PRODUCER_SERVICE, source.INGESTION_ID
                         )
-                """
-                cursor.execute(merge_query)
+                """)
                 inserted = cursor.rowcount
                 skipped = len(events) - inserted
-                
-                # Step 4: Drop staging table
-                cursor.execute("DROP TABLE CLICKS_STAGING")
-                
+
+                cursor.execute("DROP TABLE IF EXISTS CLICKS_STAGING")
+
                 if skipped > 0:
                     logger.info(f"Merged {inserted} clicks (skipped {skipped} duplicates)")
                 else:
                     logger.info(f"Inserted {inserted} clicks into Snowflake")
                 return inserted
-                
+
         except (ProgrammingError, DatabaseError) as e:
             logger.error(f"Snowflake write error: {e}")
             raise SnowflakeWriterError(f"Write failed: {e}")
         except Exception as e:
             logger.error(f"Unexpected error writing to Snowflake: {e}")
             raise SnowflakeWriterError(f"Unexpected error: {e}")
+
     
     def test_connection(self) -> bool:
         """Test Snowflake connection
