@@ -105,7 +105,7 @@ echo "============================================================"
 
 # Generate list of dates in range
 current="$START_DATE"
-while [[ "$current" <= "$END_DATE" ]]; do
+while [[ "$current" < "$END_DATE" || "$current" == "$END_DATE" ]]; do
     LOG_DIR="$LOGS_BASE/$current"
     mkdir -p "$LOG_DIR"
 
