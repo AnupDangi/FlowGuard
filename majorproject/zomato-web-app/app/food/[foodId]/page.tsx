@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { trackOrderEvent, getUserId } from "@/lib/eventTracker";
+import { trackOrderEvent, trackClickEvent, getUserId } from "@/lib/eventTracker";
 
 interface FoodItem {
   food_id: number;
@@ -24,9 +24,9 @@ export default function FoodDetailPage() {
 
   useEffect(() => {
     setUserId(getUserId());
-    
+
     const foodId = params.foodId as string;
-    
+
     // Fetch food details from API
     fetch(`http://localhost:8001/api/foods/${foodId}`)
       .then(res => {
@@ -36,6 +36,9 @@ export default function FoodDetailPage() {
       .then(data => {
         setFood(data);
         setLoading(false);
+        // Fire impression event: user navigated to this page = real interest signal
+        // This is the correct "ad impression" per Zomato's attribution architecture
+        trackClickEvent(`food_${data.food_id}`, false);
       })
       .catch(err => {
         console.error('Error fetching food:', err);
@@ -45,16 +48,16 @@ export default function FoodDetailPage() {
 
   const handleOrderClick = async () => {
     if (!food) return;
-    
+
     const { orderId, success } = await trackOrderEvent(
-      food.food_id, 
-      food.name, 
+      food.food_id,
+      food.name,
       food.price,
       food.category,
       food.description || '',
       food.image_url
     );
-    
+
     if (success) {
       router.push(`/order/${orderId}`);
     } else {
@@ -141,11 +144,10 @@ export default function FoodDetailPage() {
                 <button
                   onClick={handleOrderClick}
                   disabled={!food.is_available}
-                  className={`w-full py-4 rounded-lg font-bold text-lg transition ${
-                    food.is_available
+                  className={`w-full py-4 rounded-lg font-bold text-lg transition ${food.is_available
                       ? 'bg-red-600 text-white hover:bg-red-700 shadow-lg hover:shadow-xl'
                       : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                  }`}
+                    }`}
                 >
                   {food.is_available ? '🛒 Order Now' : 'Out of Stock'}
                 </button>

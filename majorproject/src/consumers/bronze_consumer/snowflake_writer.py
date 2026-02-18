@@ -5,8 +5,8 @@ Handles bulk inserts to Snowflake with connection pooling and error handling.
 
 import json
 import logging
-from typing import List, Dict, Any
-from datetime import datetime
+from typing import List, Dict, Any, Optional
+from datetime import datetime, date
 from contextlib import contextmanager
 
 import snowflake.connector
@@ -15,6 +15,32 @@ from snowflake.connector.errors import ProgrammingError, DatabaseError
 from .config import get_config
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_timestamp(ts_value) -> Optional[datetime]:
+    """Parse a timestamp value to a Python datetime object.
+    
+    Snowflake connector correctly maps Python datetime -> TIMESTAMP_NTZ.
+    Passing raw ISO strings causes NULL because the connector doesn't auto-cast.
+    """
+    if ts_value is None:
+        return None
+    if isinstance(ts_value, datetime):
+        return ts_value
+    if isinstance(ts_value, str):
+        try:
+            # Handle both 'Z' suffix and '+00:00' offset
+            return datetime.fromisoformat(ts_value.replace('Z', '+00:00'))
+        except ValueError:
+            logger.warning(f"Could not parse timestamp: {ts_value!r}")
+            return None
+    return None
+
+
+def _extract_date(ts_value) -> Optional[date]:
+    """Extract a date from a timestamp value for PARTITION_DATE column."""
+    dt = _parse_timestamp(ts_value)
+    return dt.date() if dt else None
 
 
 class SnowflakeWriterError(Exception):
@@ -118,7 +144,7 @@ class SnowflakeWriter:
             with self._get_cursor() as cursor:
                 # Step 1: Create temporary table
                 cursor.execute("""
-                    CREATE TEMPORARY TABLE ORDERS_STAGING (
+                    CREATE OR REPLACE TEMPORARY TABLE ORDERS_STAGING (
                         EVENT_ID VARCHAR,
                         ORDER_ID VARCHAR,
                         USER_ID VARCHAR,
@@ -127,6 +153,7 @@ class SnowflakeWriter:
                         PRICE FLOAT,
                         STATUS VARCHAR,
                         EVENT_TIMESTAMP TIMESTAMP_NTZ,
+                        PARTITION_DATE DATE,
                         RAW_EVENT VARIANT,
                         EVENT_TYPE VARCHAR,
                         SCHEMA_VERSION VARCHAR,
@@ -138,21 +165,22 @@ class SnowflakeWriter:
                 
                 # Step 2: Bulk insert into staging table
                 insert_staging = """
-                    INSERT INTO ORDERS_STAGING 
-                    SELECT %s, %s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, %s, %s, %s, %s
+                    INSERT INTO ORDERS_STAGING VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, %s, %s, %s, %s)
                 """
                 
                 rows = []
                 for event, metadata in events:
+                    ts = _parse_timestamp(event.get('timestamp'))
                     row = (
                         event.get('event_id'),
                         event.get('order_id'),
-                        event.get('user_id'),
-                        event.get('item_id'),
+                        str(event.get('user_id')) if event.get('user_id') is not None else None,
+                        str(event.get('item_id')) if event.get('item_id') is not None else None,
                         event.get('item_name'),
                         event.get('price'),
                         event.get('status', 'confirmed'),
-                        event.get('timestamp'),
+                        ts,                          # datetime object → TIMESTAMP_NTZ (no NULL)
+                        ts.date() if ts else None,   # PARTITION_DATE for Silver ETL queries
                         json.dumps(event),
                         event.get('event_type', 'order'),
                         metadata.get('schema_version'),
@@ -173,13 +201,13 @@ class SnowflakeWriter:
                     WHEN NOT MATCHED THEN
                         INSERT (
                             EVENT_ID, ORDER_ID, USER_ID, ITEM_ID, ITEM_NAME, PRICE, STATUS,
-                            EVENT_TIMESTAMP, RAW_EVENT, EVENT_TYPE, SCHEMA_VERSION, 
+                            EVENT_TIMESTAMP, PARTITION_DATE, RAW_EVENT, EVENT_TYPE, SCHEMA_VERSION,
                             SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
                         )
                         VALUES (
                             source.EVENT_ID, source.ORDER_ID, source.USER_ID, source.ITEM_ID,
                             source.ITEM_NAME, source.PRICE, source.STATUS, source.EVENT_TIMESTAMP,
-                            source.RAW_EVENT, source.EVENT_TYPE, source.SCHEMA_VERSION,
+                            source.PARTITION_DATE, source.RAW_EVENT, source.EVENT_TYPE, source.SCHEMA_VERSION,
                             source.SOURCE_TOPIC, source.PRODUCER_SERVICE, source.INGESTION_ID
                         )
                 """
@@ -222,13 +250,14 @@ class SnowflakeWriter:
             with self._get_cursor() as cursor:
                 # Step 1: Create temporary table
                 cursor.execute("""
-                    CREATE TEMPORARY TABLE CLICKS_STAGING (
+                    CREATE OR REPLACE TEMPORARY TABLE CLICKS_STAGING (
                         EVENT_ID VARCHAR,
                         USER_ID VARCHAR,
                         EVENT_TYPE VARCHAR,
                         ITEM_ID VARCHAR,
                         SESSION_ID VARCHAR,
                         EVENT_TIMESTAMP TIMESTAMP_NTZ,
+                        PARTITION_DATE DATE,
                         RAW_EVENT VARIANT,
                         SCHEMA_VERSION VARCHAR,
                         SOURCE_TOPIC VARCHAR,
@@ -239,19 +268,20 @@ class SnowflakeWriter:
                 
                 # Step 2: Bulk insert into staging table
                 insert_staging = """
-                    INSERT INTO CLICKS_STAGING 
-                    SELECT %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, %s, %s, %s
+                    INSERT INTO CLICKS_STAGING VALUES (%s, %s, %s, %s, %s, %s, %s, PARSE_JSON(%s), %s, %s, %s, %s)
                 """
                 
                 rows = []
                 for event, metadata in events:
+                    ts = _parse_timestamp(event.get('timestamp'))
                     row = (
                         event.get('event_id'),
-                        event.get('user_id'),
+                        str(event.get('user_id')) if event.get('user_id') is not None else None,
                         event.get('event_type'),
-                        event.get('item_id'),
+                        str(event.get('item_id')) if event.get('item_id') is not None else None,
                         event.get('session_id'),
-                        event.get('timestamp'),
+                        ts,                          # datetime object → TIMESTAMP_NTZ (no NULL)
+                        ts.date() if ts else None,   # PARTITION_DATE for Silver ETL queries
                         json.dumps(event),
                         metadata.get('schema_version'),
                         metadata.get('source_topic'),
@@ -263,7 +293,7 @@ class SnowflakeWriter:
                 # Bulk insert all rows
                 cursor.executemany(insert_staging, rows)
                 
-                # Step 3: Single MERGE from staging to target (now with idempotency!)
+                # Step 3: Single MERGE from staging to target (idempotent via INGESTION_ID)
                 merge_query = """
                     MERGE INTO CLICKS_RAW AS target
                     USING CLICKS_STAGING AS source
@@ -271,14 +301,14 @@ class SnowflakeWriter:
                     WHEN NOT MATCHED THEN
                         INSERT (
                             EVENT_ID, USER_ID, EVENT_TYPE, ITEM_ID, SESSION_ID,
-                            EVENT_TIMESTAMP, RAW_EVENT, SCHEMA_VERSION,
+                            EVENT_TIMESTAMP, PARTITION_DATE, RAW_EVENT, SCHEMA_VERSION,
                             SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
                         )
                         VALUES (
                             source.EVENT_ID, source.USER_ID, source.EVENT_TYPE,
                             source.ITEM_ID, source.SESSION_ID, source.EVENT_TIMESTAMP,
-                            source.RAW_EVENT, source.SCHEMA_VERSION, source.SOURCE_TOPIC,
-                            source.PRODUCER_SERVICE, source.INGESTION_ID
+                            source.PARTITION_DATE, source.RAW_EVENT, source.SCHEMA_VERSION,
+                            source.SOURCE_TOPIC, source.PRODUCER_SERVICE, source.INGESTION_ID
                         )
                 """
                 cursor.execute(merge_query)

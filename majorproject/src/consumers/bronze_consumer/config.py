@@ -27,7 +27,8 @@ class ConsumerConfig:
     
     # Batching configuration
     batch_size: int = int(os.getenv('BATCH_SIZE', '100'))  # 100 events
-    batch_timeout_seconds: float = float(os.getenv('BATCH_TIMEOUT', '5.0'))  # 5 seconds
+    batch_timeout_seconds: float = float(os.getenv('BATCH_TIMEOUT', '300.0'))  # 5 minutes (300 seconds)
+    batch_max_size_mb: float = float(os.getenv('BATCH_MAX_SIZE_MB', '128.0'))  # 128 MB max batch size
     
     # Snowflake settings
     snowflake_account: str = os.getenv('SNOWFLAKE_ACCOUNT', 'ZLNJTCF-KE38237')

@@ -32,6 +32,7 @@ class BronzeConsumer:
         self._orders_batch: List[Dict[str, Any]] = []
         self._clicks_batch: List[Dict[str, Any]] = []
         self._batch_start_time = time.time()
+        self._batch_size_bytes = 0  # Track batch size in bytes
         
         # Statistics
         self._messages_consumed = 0
@@ -55,18 +56,24 @@ class BronzeConsumer:
             raise
     
     def _should_flush_batch(self) -> bool:
-        """Check if batch should be flushed based on size or time"""
+        """Check if batch should be flushed based on size, bytes, or time"""
         total_events = len(self._orders_batch) + len(self._clicks_batch)
+        batch_size_mb = self._batch_size_bytes / (1024 * 1024)
         
-        # Size limit reached
-        if total_events >= self.config.batch_size:
-            logger.debug(f"Batch size limit reached: {total_events} events")
+        # Size limit reached (128 MB)
+        if batch_size_mb >= self.config.batch_max_size_mb:
+            logger.info(f"Batch size limit reached: {batch_size_mb:.2f} MB")
             return True
         
-        # Time limit reached
+        # Event count limit reached
+        if total_events >= self.config.batch_size:
+            logger.debug(f"Batch count limit reached: {total_events} events")
+            return True
+        
+        # Time limit reached (5 minutes)
         elapsed = time.time() - self._batch_start_time
         if elapsed >= self.config.batch_timeout_seconds:
-            logger.debug(f"Batch timeout reached: {elapsed:.2f}s")
+            logger.info(f"Batch timeout reached: {elapsed:.2f}s ({total_events} events, {batch_size_mb:.2f} MB)")
             return True
         
         return False
@@ -97,6 +104,7 @@ class BronzeConsumer:
             
             # ✅ Commit offsets only after successful Snowflake write
             self._consumer.commit(asynchronous=False)
+            self._batch_size_bytes = 0  # Reset byte counter
             logger.info("Kafka offsets committed")
             
             # Reset batches
@@ -130,6 +138,10 @@ class BronzeConsumer:
             topic = msg.topic()
             partition = msg.partition()
             offset = msg.offset()
+            
+            # Calculate message size
+            message_size = len(msg.value())
+            self._batch_size_bytes += message_size
             
             # Add production metadata
             kafka_metadata = {

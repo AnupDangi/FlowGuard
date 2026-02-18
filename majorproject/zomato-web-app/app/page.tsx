@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { trackOrderEvent, trackClickEvent, getUserId } from "@/lib/eventTracker";
+import { trackOrderEvent, getUserId } from "@/lib/eventTracker";
 
 interface FoodItem {
   food_id: number;
@@ -25,7 +25,7 @@ export default function Home() {
   useEffect(() => {
     // Set user ID on client side only
     setUserId(getUserId());
-    
+
     // Fetch categories
     fetch('http://localhost:8001/api/foods/categories/list')
       .then(res => res.json())
@@ -38,10 +38,10 @@ export default function Home() {
 
   const fetchFoods = (category?: string) => {
     setLoading(true);
-    const url = category 
+    const url = category
       ? `http://localhost:8001/api/foods?category=${category}`
       : 'http://localhost:8001/api/foods';
-    
+
     fetch(url)
       .then(res => res.json())
       .then(data => {
@@ -61,17 +61,17 @@ export default function Home() {
 
   const handleOrderClick = async (food: FoodItem, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent card click from firing
-    
+
     // Send order event to Events Gateway and navigate to order page
     const { orderId, success } = await trackOrderEvent(
-      food.food_id, 
-      food.name, 
+      food.food_id,
+      food.name,
       food.price,
       food.category,
       food.description || '',
       food.image_url
     );
-    
+
     if (success) {
       router.push(`/order/${orderId}`);
     } else {
@@ -79,14 +79,8 @@ export default function Home() {
     }
   };
 
-  const handleFoodImpression = (food: FoodItem) => {
-    // Track food item impression (view)
-    trackClickEvent(`food_${food.food_id}`, false);
-  };
-
   const handleFoodClick = (food: FoodItem) => {
-    // Track food item click and navigate to detail page
-    trackClickEvent(`food_${food.food_id}`, true);
+    // Navigate to detail page — impression is tracked there on page load
     router.push(`/food/${food.food_id}`);
   };
 
@@ -112,11 +106,10 @@ export default function Home() {
           <div className="flex gap-2 overflow-x-auto">
             <button
               onClick={() => handleCategoryClick(null)}
-              className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition ${
-                selectedCategory === null
+              className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition ${selectedCategory === null
                   ? 'bg-red-600 text-white'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
+                }`}
             >
               All
             </button>
@@ -124,11 +117,10 @@ export default function Home() {
               <button
                 key={cat}
                 onClick={() => handleCategoryClick(cat)}
-                className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition ${
-                  selectedCategory === cat
+                className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition ${selectedCategory === cat
                     ? 'bg-red-600 text-white'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
+                  }`}
               >
                 {cat}
               </button>
@@ -148,18 +140,17 @@ export default function Home() {
           <>
             <div className="mb-6">
               <h2 className="text-2xl font-semibold text-gray-900">
-                {selectedCategory || 'All Items'} 
+                {selectedCategory || 'All Items'}
                 <span className="text-gray-500 text-lg ml-2">({foods.length})</span>
               </h2>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {foods.map(food => (
-                <div 
-                  key={food.food_id} 
+                <div
+                  key={food.food_id}
                   className="bg-white rounded-xl shadow-sm hover:shadow-lg transition-all overflow-hidden group cursor-pointer"
                   onClick={() => handleFoodClick(food)}
-                  onMouseEnter={() => handleFoodImpression(food)}
                 >
                   <div className="relative h-48 bg-gray-100">
                     <img
@@ -175,12 +166,12 @@ export default function Home() {
                       </div>
                     )}
                   </div>
-                  
+
                   <div className="p-4">
                     <div className="flex items-start justify-between mb-2">
                       <h3 className="font-semibold text-gray-900 text-lg">{food.name}</h3>
                     </div>
-                    
+
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
                         {food.category}
@@ -189,15 +180,14 @@ export default function Home() {
                         ₹{food.price}
                       </span>
                     </div>
-                    
+
                     <button
                       onClick={(e) => handleOrderClick(food, e)}
                       disabled={!food.is_available}
-                      className={`w-full py-2 rounded-lg font-semibold transition ${
-                        food.is_available
+                      className={`w-full py-2 rounded-lg font-semibold transition ${food.is_available
                           ? 'bg-red-600 text-white hover:bg-red-700'
                           : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                      }`}
+                        }`}
                     >
                       {food.is_available ? 'Order Now' : 'Out of Stock'}
                     </button>
