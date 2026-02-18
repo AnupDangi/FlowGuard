@@ -27,6 +27,11 @@ sleep 3
 
 # 3. Start Events Gateway Service
 echo "3️⃣  Starting Events Gateway Service (port 8000)..."
+# Kill any stale process on port 8000
+lsof -ti:8000 | xargs kill -9 2>/dev/null || true
+sleep 1
+# Load .env so POSTGRES_PORT, KAFKA_BOOTSTRAP_SERVERS etc. are available
+set -a; source .env; set +a
 PYTHONPATH=$PWD /Users/anupdangi/Desktop/AnupAI/projects/2026/FlowGuard/venv/bin/python \
     -m uvicorn src.services.events_gateway.main:app \
     --host 0.0.0.0 --port 8000 --reload > /tmp/events_gateway.log 2>&1 &

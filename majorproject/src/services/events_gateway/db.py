@@ -25,23 +25,29 @@ connection_pool: Optional[pool.SimpleConnectionPool] = None
 def init_connection_pool():
     """Initialize database connection pool."""
     global connection_pool
-    
-    if connection_pool is None:
-        try:
-            connection_pool = psycopg2.pool.SimpleConnectionPool(
-                2,  # Min connections
-                10,  # Max connections
-                host=DatabaseConfig.HOST,
-                port=DatabaseConfig.PORT,
-                database=DatabaseConfig.DATABASE,
-                user=DatabaseConfig.USER,
-                password=DatabaseConfig.PASSWORD
-            )
-            print(f"✅ Database connection pool initialized (Events Gateway)")
-        except Exception as e:
-            print(f"❌ Failed to initialize database connection pool: {e}")
-            print(f"⚠️  Events Gateway will start but database operations will fail")
-            # Don't raise - allow service to start even if DB is down
+
+    if connection_pool is not None:
+        return  # Already initialized
+
+    try:
+        connection_pool = psycopg2.pool.SimpleConnectionPool(
+            2,   # Min connections
+            10,  # Max connections
+            host=DatabaseConfig.HOST,
+            port=DatabaseConfig.PORT,
+            database=DatabaseConfig.DATABASE,
+            user=DatabaseConfig.USER,
+            password=DatabaseConfig.PASSWORD
+        )
+        print(f"✅ Database connection pool initialized (Events Gateway) "
+              f"→ {DatabaseConfig.HOST}:{DatabaseConfig.PORT}/{DatabaseConfig.DATABASE}")
+    except Exception as e:
+        # Log the real error clearly — don't silently swallow it
+        print(f"❌ Failed to initialize DB pool: {e}")
+        print(f"   HOST={DatabaseConfig.HOST} PORT={DatabaseConfig.PORT} "
+              f"DB={DatabaseConfig.DATABASE} USER={DatabaseConfig.USER}")
+        # Re-raise so the caller knows startup failed
+        raise
 
 
 def close_connection_pool():
@@ -56,10 +62,25 @@ def close_connection_pool():
 
 @contextmanager
 def get_db_connection():
-    """Get database connection from pool."""
+    """Get database connection from pool.
+
+    Lazy-initializes the pool on first use if startup failed.
+    This means orders will work even if the DB wasn't ready when
+    the gateway started.
+    """
+    global connection_pool
     if connection_pool is None:
-        raise RuntimeError("Database connection pool not initialized. PostgreSQL may be down.")
-    
+        # Retry pool init (e.g. DB was down at startup but is up now)
+        try:
+            init_connection_pool()
+        except Exception as e:
+            raise RuntimeError(
+                f"Database connection pool not initialized. "
+                f"PostgreSQL may be down or misconfigured. "
+                f"HOST={DatabaseConfig.HOST} PORT={DatabaseConfig.PORT}. "
+                f"Error: {e}"
+            )
+
     conn = connection_pool.getconn()
     try:
         yield conn
