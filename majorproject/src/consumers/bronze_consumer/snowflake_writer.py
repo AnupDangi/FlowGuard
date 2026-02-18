@@ -126,53 +126,63 @@ class SnowflakeWriter:
                 cursor.close()
     
     def write_orders_batch(self, events: List[tuple]) -> int:
-        """Write batch of order events to ORDERS_RAW table with idempotency"""
+        """Write batch of order events to ORDERS_RAW table with idempotency.
+
+        Actual ORDERS_RAW DDL (Snowflake):
+          EVENT_ID VARCHAR, ORDER_ID VARCHAR, USER_ID NUMBER, ITEM_ID NUMBER,
+          ITEM_NAME VARCHAR, PRICE NUMBER, STATUS VARCHAR,
+          EVENT_TIMESTAMP TIMESTAMP_NTZ, RAW_EVENT VARIANT,
+          INGESTION_TIMESTAMP TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),  <- auto
+          PARTITION_DATE DATE AS (CAST(EVENT_TIMESTAMP AS DATE)),          <- computed
+          EVENT_TYPE VARCHAR, SCHEMA_VERSION VARCHAR,
+          SOURCE_TOPIC VARCHAR, PRODUCER_SERVICE VARCHAR, INGESTION_ID VARCHAR
+        """
         if not events:
             return 0
 
         try:
             with self._get_cursor() as cursor:
-                # Step 1: Staging table — RAW_EVENT stored as VARCHAR, cast to VARIANT in MERGE
-                # executemany() uses server-side binding which does NOT support PARSE_JSON(%s)
+                # Staging: RAW_EVENT as VARCHAR (executemany can't call PARSE_JSON(%s))
+                # USER_ID/ITEM_ID as NUMBER to match target schema
                 cursor.execute("""
                     CREATE OR REPLACE TEMPORARY TABLE ORDERS_STAGING (
-                        EVENT_ID VARCHAR,
-                        ORDER_ID VARCHAR,
-                        USER_ID VARCHAR,
-                        ITEM_ID VARCHAR,
-                        ITEM_NAME VARCHAR,
-                        PRICE FLOAT,
-                        STATUS VARCHAR,
+                        EVENT_ID      VARCHAR,
+                        ORDER_ID      VARCHAR,
+                        USER_ID       NUMBER,
+                        ITEM_ID       NUMBER,
+                        ITEM_NAME     VARCHAR,
+                        PRICE         FLOAT,
+                        STATUS        VARCHAR,
                         EVENT_TIMESTAMP TIMESTAMP_NTZ,
-                        PARTITION_DATE DATE,
-                        RAW_EVENT VARCHAR,
-                        EVENT_TYPE VARCHAR,
+                        RAW_EVENT     VARCHAR,
+                        EVENT_TYPE    VARCHAR,
                         SCHEMA_VERSION VARCHAR,
-                        SOURCE_TOPIC VARCHAR,
+                        SOURCE_TOPIC  VARCHAR,
                         PRODUCER_SERVICE VARCHAR,
-                        INGESTION_ID VARCHAR PRIMARY KEY
+                        INGESTION_ID  VARCHAR PRIMARY KEY
                     )
                 """)
 
-                # Step 2: Bulk insert — all %s are plain scalars (no function calls)
                 insert_staging = """
-                    INSERT INTO ORDERS_STAGING VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    INSERT INTO ORDERS_STAGING
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """
 
                 rows = []
                 for event, metadata in events:
                     ts = _parse_timestamp(event.get('timestamp'))
+                    uid = event.get('user_id')
+                    iid = event.get('item_id')
                     rows.append((
                         event.get('event_id'),
                         event.get('order_id'),
-                        str(event.get('user_id')) if event.get('user_id') is not None else None,
-                        str(event.get('item_id')) if event.get('item_id') is not None else None,
+                        int(uid) if uid is not None else None,
+                        int(iid) if iid is not None else None,
                         event.get('item_name'),
                         event.get('price'),
                         event.get('status', 'confirmed'),
                         ts,
-                        ts.date() if ts else None,
-                        json.dumps(event),           # VARCHAR — cast to VARIANT in MERGE below
+                        json.dumps(event),   # VARCHAR — TRY_PARSE_JSON in MERGE
                         event.get('event_type', 'order'),
                         metadata.get('schema_version'),
                         metadata.get('source_topic'),
@@ -182,7 +192,7 @@ class SnowflakeWriter:
 
                 cursor.executemany(insert_staging, rows)
 
-                # Step 3: MERGE — TRY_PARSE_JSON casts VARCHAR → VARIANT safely
+                # MERGE: exclude PARTITION_DATE (computed) and INGESTION_TIMESTAMP (default)
                 cursor.execute("""
                     MERGE INTO ORDERS_RAW AS target
                     USING ORDERS_STAGING AS source
@@ -190,13 +200,13 @@ class SnowflakeWriter:
                     WHEN NOT MATCHED THEN
                         INSERT (
                             EVENT_ID, ORDER_ID, USER_ID, ITEM_ID, ITEM_NAME, PRICE, STATUS,
-                            EVENT_TIMESTAMP, PARTITION_DATE, RAW_EVENT, EVENT_TYPE,
+                            EVENT_TIMESTAMP, RAW_EVENT, EVENT_TYPE,
                             SCHEMA_VERSION, SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
                         )
                         VALUES (
                             source.EVENT_ID, source.ORDER_ID, source.USER_ID, source.ITEM_ID,
                             source.ITEM_NAME, source.PRICE, source.STATUS, source.EVENT_TIMESTAMP,
-                            source.PARTITION_DATE, TRY_PARSE_JSON(source.RAW_EVENT),
+                            TRY_PARSE_JSON(source.RAW_EVENT),
                             source.EVENT_TYPE, source.SCHEMA_VERSION,
                             source.SOURCE_TOPIC, source.PRODUCER_SERVICE, source.INGESTION_ID
                         )
@@ -221,46 +231,55 @@ class SnowflakeWriter:
 
     
     def write_clicks_batch(self, events: List[tuple]) -> int:
-        """Write batch of click events to CLICKS_RAW table with idempotency"""
+        """Write batch of click events to CLICKS_RAW table with idempotency.
+
+        Actual CLICKS_RAW DDL (Snowflake):
+          EVENT_ID VARCHAR, USER_ID NUMBER, EVENT_TYPE VARCHAR, ITEM_ID NUMBER,
+          SESSION_ID VARCHAR, EVENT_TIMESTAMP TIMESTAMP_NTZ, RAW_EVENT VARIANT,
+          INGESTION_TIMESTAMP TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),  <- auto
+          PARTITION_DATE DATE AS (CAST(EVENT_TIMESTAMP AS DATE)),          <- computed
+          SCHEMA_VERSION VARCHAR, SOURCE_TOPIC VARCHAR,
+          PRODUCER_SERVICE VARCHAR, INGESTION_ID VARCHAR
+        """
         if not events:
             return 0
 
         try:
             with self._get_cursor() as cursor:
-                # Step 1: Staging table — RAW_EVENT as VARCHAR, cast to VARIANT in MERGE
                 cursor.execute("""
                     CREATE OR REPLACE TEMPORARY TABLE CLICKS_STAGING (
-                        EVENT_ID VARCHAR,
-                        USER_ID VARCHAR,
-                        EVENT_TYPE VARCHAR,
-                        ITEM_ID VARCHAR,
-                        SESSION_ID VARCHAR,
+                        EVENT_ID      VARCHAR,
+                        USER_ID       NUMBER,
+                        EVENT_TYPE    VARCHAR,
+                        ITEM_ID       NUMBER,
+                        SESSION_ID    VARCHAR,
                         EVENT_TIMESTAMP TIMESTAMP_NTZ,
-                        PARTITION_DATE DATE,
-                        RAW_EVENT VARCHAR,
+                        RAW_EVENT     VARCHAR,
                         SCHEMA_VERSION VARCHAR,
-                        SOURCE_TOPIC VARCHAR,
+                        SOURCE_TOPIC  VARCHAR,
                         PRODUCER_SERVICE VARCHAR,
-                        INGESTION_ID VARCHAR PRIMARY KEY
+                        INGESTION_ID  VARCHAR PRIMARY KEY
                     )
                 """)
 
                 insert_staging = """
-                    INSERT INTO CLICKS_STAGING VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    INSERT INTO CLICKS_STAGING
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """
 
                 rows = []
                 for event, metadata in events:
                     ts = _parse_timestamp(event.get('timestamp'))
+                    uid = event.get('user_id')
+                    iid = event.get('item_id')
                     rows.append((
                         event.get('event_id'),
-                        str(event.get('user_id')) if event.get('user_id') is not None else None,
+                        int(uid) if uid is not None else None,
                         event.get('event_type'),
-                        str(event.get('item_id')) if event.get('item_id') is not None else None,
+                        int(iid) if iid is not None else None,
                         event.get('session_id'),
                         ts,
-                        ts.date() if ts else None,
-                        json.dumps(event),           # VARCHAR — cast to VARIANT in MERGE
+                        json.dumps(event),   # VARCHAR — TRY_PARSE_JSON in MERGE
                         metadata.get('schema_version'),
                         metadata.get('source_topic'),
                         metadata.get('producer_service'),
@@ -269,7 +288,7 @@ class SnowflakeWriter:
 
                 cursor.executemany(insert_staging, rows)
 
-                # Step 3: MERGE — TRY_PARSE_JSON casts VARCHAR → VARIANT
+                # MERGE: exclude PARTITION_DATE (computed) and INGESTION_TIMESTAMP (default)
                 cursor.execute("""
                     MERGE INTO CLICKS_RAW AS target
                     USING CLICKS_STAGING AS source
@@ -277,13 +296,13 @@ class SnowflakeWriter:
                     WHEN NOT MATCHED THEN
                         INSERT (
                             EVENT_ID, USER_ID, EVENT_TYPE, ITEM_ID, SESSION_ID,
-                            EVENT_TIMESTAMP, PARTITION_DATE, RAW_EVENT,
+                            EVENT_TIMESTAMP, RAW_EVENT,
                             SCHEMA_VERSION, SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
                         )
                         VALUES (
                             source.EVENT_ID, source.USER_ID, source.EVENT_TYPE,
                             source.ITEM_ID, source.SESSION_ID, source.EVENT_TIMESTAMP,
-                            source.PARTITION_DATE, TRY_PARSE_JSON(source.RAW_EVENT),
+                            TRY_PARSE_JSON(source.RAW_EVENT),
                             source.SCHEMA_VERSION, source.SOURCE_TOPIC,
                             source.PRODUCER_SERVICE, source.INGESTION_ID
                         )
