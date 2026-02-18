@@ -57,7 +57,7 @@ else
 fi
 
 if docker ps | grep -q "flowguard-postgres"; then
-    echo "✅ PostgreSQL: localhost:5432"
+    echo "✅ PostgreSQL: localhost:5433"
 else
     echo "❌ PostgreSQL FAILED"
 fi
