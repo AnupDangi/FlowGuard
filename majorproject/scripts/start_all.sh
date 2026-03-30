@@ -67,6 +67,12 @@ else
     echo "❌ PostgreSQL FAILED"
 fi
 
+if docker ps | grep -q "flowguard-analytics-postgres"; then
+    echo "✅ Analytics PostgreSQL: localhost:5434"
+else
+    echo "❌ Analytics PostgreSQL FAILED"
+fi
+
 echo ""
 echo "========================================="
 echo "Next Steps"

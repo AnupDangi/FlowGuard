@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { trackOrderEvent, trackClickEvent, getUserId } from "@/lib/eventTracker";
+import { trackOrderEvent, trackClickEvent, trackViewEvent } from "@/lib/eventTracker";
+import { getStoredAuth } from "@/lib/auth";
 
 interface FoodItem {
   food_id: number;
@@ -20,14 +21,19 @@ export default function FoodDetailPage() {
   const router = useRouter();
   const [food, setFood] = useState<FoodItem | null>(null);
   const [loading, setLoading] = useState(true);
-  const [userId, setUserId] = useState<string>('');
+  const [userLabel, setUserLabel] = useState<string>('');
 
   useEffect(() => {
-    setUserId(getUserId());
+    const auth = getStoredAuth();
+    if (!auth?.access_token) {
+      router.replace('/auth');
+      return;
+    }
+    setUserLabel(auth.user?.email || `user_${auth.user?.id}`);
 
     const foodId = params.foodId as string;
 
-    // Fetch food details from API
+    // Fetch food details from JSON Server
     fetch(`http://localhost:8001/api/foods/${foodId}`)
       .then(res => {
         if (!res.ok) throw new Error('Food not found');
@@ -36,15 +42,15 @@ export default function FoodDetailPage() {
       .then(data => {
         setFood(data);
         setLoading(false);
-        // Fire impression event: user navigated to this page = real interest signal
-        // This is the correct "ad impression" per Zomato's attribution architecture
-        trackClickEvent(`food_${data.food_id}`, false);
+        trackClickEvent(`food_${data.food_id}`, false, data.category, 'food_detail');
+        trackViewEvent(data.food_id, data.category, 'food_detail');
+
       })
       .catch(err => {
         console.error('Error fetching food:', err);
         setLoading(false);
       });
-  }, [params.foodId]);
+  }, [params.foodId, router]);
 
   const handleOrderClick = async () => {
     if (!food) return;
@@ -95,8 +101,8 @@ export default function FoodDetailPage() {
           </Link>
           <h1 className="text-2xl font-bold text-red-600">🍕 FlowGuard Food</h1>
           <div className="text-right">
-            <p className="text-xs text-gray-400">Session ID</p>
-            <p className="text-xs font-mono text-gray-600">{userId ? userId.slice(-12) : '...'}</p>
+            <p className="text-xs text-gray-400">User</p>
+            <p className="text-xs font-mono text-gray-600">{userLabel || '...'}</p>
           </div>
         </div>
       </header>
@@ -123,6 +129,7 @@ export default function FoodDetailPage() {
 
             {/* Food Details */}
             <div className="p-8 flex flex-col">
+
               <div className="mb-4">
                 <span className="inline-block bg-red-100 text-red-700 text-sm px-3 py-1 rounded-full mb-3">
                   {food.category}
@@ -145,8 +152,8 @@ export default function FoodDetailPage() {
                   onClick={handleOrderClick}
                   disabled={!food.is_available}
                   className={`w-full py-4 rounded-lg font-bold text-lg transition ${food.is_available
-                      ? 'bg-red-600 text-white hover:bg-red-700 shadow-lg hover:shadow-xl'
-                      : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    ? 'bg-red-600 text-white hover:bg-red-700 shadow-lg hover:shadow-xl'
+                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                     }`}
                 >
                   {food.is_available ? '🛒 Order Now' : 'Out of Stock'}

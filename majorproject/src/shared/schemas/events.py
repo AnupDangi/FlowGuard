@@ -18,6 +18,13 @@ class EventType(str, Enum):
     VIEW = "view"
 
 
+class BehaviorEventType(str, Enum):
+    VIEW = "view"
+    IMPRESSION = "impression"
+    CLICK = "click"
+    ORDER = "order"
+
+
 class OrderEventType(str, Enum):
     """Order event subtypes"""
     PLACED = "placed"
@@ -36,7 +43,8 @@ class OrderEvent(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp")
     
     # User Information
-    user_id: int = Field(..., description="User identifier", gt=0)
+    # Derived from JWT in gateway routers; optional for client payloads.
+    user_id: Optional[int] = Field(default=None, description="User identifier", gt=0)
     
     # Order Information
     order_id: Optional[str] = Field(None, description="Order identifier (server-generated if not provided)")
@@ -94,7 +102,8 @@ class ClickEvent(BaseModel):
     timestamp: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Event timestamp")
     
     # User Information
-    user_id: int = Field(..., description="User identifier", gt=0)
+    # Derived from JWT in gateway routers; optional for client payloads.
+    user_id: Optional[int] = Field(default=None, description="User identifier", gt=0)
     session_id: Optional[str] = Field(None, description="User session identifier")
     
     # Ad Information
@@ -164,3 +173,18 @@ class EventBatch(BaseModel):
         if not v:
             raise ValueError("Event batch cannot be empty")
         return v
+
+
+class BehaviorEvent(BaseModel):
+    """Canonical event schema for personalization signals."""
+
+    event_id: Optional[str] = Field(None, description="Unique event id")
+    event_type: BehaviorEventType = Field(..., description="Behavior type")
+    event_time: datetime = Field(default_factory=datetime.utcnow)
+    # Filled from JWT auth context in the behavior router.
+    user_id: Optional[int] = Field(default=None, gt=0)
+    item_id: int = Field(..., gt=0)
+    category: Optional[str] = None
+    session_id: Optional[str] = None
+    source_page: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)

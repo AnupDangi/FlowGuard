@@ -6,14 +6,18 @@ user events into the FlowGuard real-time processing pipeline.
 
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from prometheus_client import Counter, Histogram, CONTENT_TYPE_LATEST, generate_latest
+from starlette.responses import Response
 
 from src.services.events_gateway.config import get_settings
-from src.services.events_gateway.routers import orders, clicks
+from src.services.events_gateway.routers import orders, clicks, ads_metrics, auth, behavior, fraud
+# ...
 from src.services.events_gateway.producers.kafka_producer import (
     get_producer,
     close_producer,
@@ -23,6 +27,7 @@ from src.services.events_gateway.db import (
     init_connection_pool,
     close_connection_pool
 )
+from src.services.events_gateway.metrics.runtime_metrics import get_counters
 
 # Load environment variables
 load_dotenv()
@@ -33,6 +38,17 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+HTTP_REQUESTS_TOTAL = Counter(
+    "flowguard_gateway_http_requests_total",
+    "Total HTTP requests served by Events Gateway",
+    ["method", "path", "status_code"],
+)
+HTTP_REQUEST_DURATION_SECONDS = Histogram(
+    "flowguard_gateway_http_request_duration_seconds",
+    "HTTP request latency for Events Gateway",
+    ["method", "path"],
+)
 
 
 @asynccontextmanager
@@ -49,6 +65,7 @@ async def lifespan(app: FastAPI):
     # Initialize database connection pool
     logger.info("Initializing database connection pool...")
     init_connection_pool()
+    auth.ensure_auth_tables()
     
     # Check Kafka connection
     logger.info("Checking Kafka connection...")
@@ -111,6 +128,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def prometheus_http_middleware(request: Request, call_next):
+    method = request.method
+    path = request.url.path
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+        status_code = str(response.status_code)
+        return response
+    except Exception:
+        status_code = "500"
+        raise
+    finally:
+        HTTP_REQUESTS_TOTAL.labels(method=method, path=path, status_code=status_code).inc()
+        HTTP_REQUEST_DURATION_SECONDS.labels(method=method, path=path).observe(
+            time.perf_counter() - start
+        )
+
 
 # Exception Handlers
 @app.exception_handler(Exception)
@@ -130,6 +165,10 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Register Routers
 app.include_router(orders.router)
 app.include_router(clicks.router)
+app.include_router(behavior.router)
+app.include_router(ads_metrics.router)
+app.include_router(auth.router)
+app.include_router(fraud.router)
 
 
 # Root Endpoints
@@ -149,7 +188,11 @@ async def root():
             "docs": settings.docs_url,
             "health": "/health",
             "orders": "/api/v1/orders",
-            "clicks": "/api/v1/clicks"
+            "clicks": "/api/v1/clicks",
+            "behavior": "/api/v1/behavior",
+            "ads_metrics": "/api/v1/ads/metrics",
+            "auth": "/api/v1/auth",
+            "fraud": "/api/v1/fraud",
         }
     }
 
@@ -205,6 +248,7 @@ async def metrics():
         return {
             "service": "events_gateway",
             "kafka_producer": stats,
+            "runtime_counters": get_counters(),
             "environment": settings.environment
         }
     except Exception as e:
@@ -213,6 +257,11 @@ async def metrics():
             "service": "events_gateway",
             "error": str(e)
         }
+
+
+@app.get("/metrics/prometheus", include_in_schema=False)
+async def prometheus_metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 if __name__ == "__main__":

@@ -25,9 +25,6 @@ pandas>=2.0.0
 numpy>=1.24.0
 pyarrow>=14.0.1
 
-# Snowflake Data Warehouse
-snowflake-connector-python[pandas]>=3.6.0
-
 # Logging & Monitoring
 colorlog
 
@@ -37,8 +34,9 @@ pytest-asyncio
 httpx
 pyyaml
 
-## snowflake
-snowflake-connector-python
-colorama
-
 pyspark
+redis>=4.6.0
+colorama
+PyJWT>=2.8.0
+passlib[bcrypt]>=1.7.4
+prometheus-client>=0.20.0

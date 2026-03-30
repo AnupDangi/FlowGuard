@@ -15,6 +15,8 @@ class TopicName(str, Enum):
     # Raw Events Topics (Phase 1)
     RAW_ORDERS = "raw.orders.v1"
     RAW_CLICKS = "raw.clicks.v1"
+    BEHAVIOR_EVENTS = "behavior.events.v1"
+    FRAUD_ALERTS = "fraud.alerts.v1"
     
     # Attributed Events Topics (Phase 2 - Future)
     ATTRIBUTED_EVENTS = "attributed.events.v1"
@@ -55,6 +57,34 @@ TOPIC_CONFIGS: Dict[str, TopicConfig] = {
         retention_ms=172800000,  # 2 days
         description="Raw click/impression events for ad tracking"
     ),
+    TopicName.BEHAVIOR_EVENTS: TopicConfig(
+        name=TopicName.BEHAVIOR_EVENTS,
+        partitions=6,
+        replication_factor=2,
+        retention_ms=259200000,  # 3 days
+        description="Canonical user behavior stream for realtime personalization"
+    ),
+    TopicName.FRAUD_ALERTS: TopicConfig(
+        name=TopicName.FRAUD_ALERTS,
+        partitions=3,
+        replication_factor=2,
+        retention_ms=604800000,  # 7 days
+        description="Fraud alerts emitted by realtime fraud detection job"
+    ),
+    TopicName.INCREMENTAL_BILLING: TopicConfig(
+        name=TopicName.INCREMENTAL_BILLING,
+        partitions=3,
+        replication_factor=2,
+        retention_ms=259200000,  # 3 days
+        description="Incremental billing updates produced by realtime attribution"
+    ),
+    TopicName.RECON_OVERWRITE: TopicConfig(
+        name=TopicName.RECON_OVERWRITE,
+        partitions=3,
+        replication_factor=2,
+        retention_ms=604800000,  # 7 days
+        description="Periodic reconciliation overwrite totals for billing safety net"
+    ),
 }
 
 
@@ -91,4 +121,5 @@ def get_phase1_topics() -> List[str]:
     return [
         TopicName.RAW_ORDERS.value,
         TopicName.RAW_CLICKS.value,
+        TopicName.BEHAVIOR_EVENTS.value,
     ]

@@ -11,10 +11,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-COMPOSE_FILE="$PROJECT_ROOT/airflow/docker-compose.airflow.yml"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COMPOSE_FILE="$PROJECT_ROOT/infrastructure/airflow/docker-compose.yml"
 
-# Load .env so Snowflake creds are available to Airflow containers
+# Load .env so analytics DB/Redis creds are available to Airflow containers
 if [ -f "$PROJECT_ROOT/.env" ]; then
     set -a
     source "$PROJECT_ROOT/.env"
@@ -36,11 +36,11 @@ case "$ACTION" in
         fi
 
         # Create Airflow directories
-        mkdir -p "$PROJECT_ROOT/airflow/logs"
-        mkdir -p "$PROJECT_ROOT/airflow/plugins"
+        mkdir -p "$PROJECT_ROOT/logs/airflow"
+        mkdir -p "$PROJECT_ROOT/plugins"
 
         # Start Airflow
-        docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
+        docker compose -f "$COMPOSE_FILE" up -d
 
         echo ""
         echo "⏳ Waiting for Airflow webserver to be ready..."
@@ -62,6 +62,7 @@ case "$ACTION" in
         echo "  DAGs:"
         echo "    flowguard_silver_etl  (hourly)"
         echo "    flowguard_gold_etl    (daily)"
+        echo "    flowguard_recon_etl   (every 15 min)"
         echo "════════════════════════════════════════"
         ;;
 

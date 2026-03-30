@@ -1,6 +1,6 @@
-"""Configuration for Bronze Layer Consumer
+"""Configuration for Bronze Layer Consumer.
 
-Environment-based configuration for Kafka, Snowflake, and batching parameters.
+Environment-based configuration for Kafka, PostgreSQL analytics, and batching parameters.
 """
 
 import os
@@ -23,20 +23,19 @@ class ConsumerConfig:
     consumer_group: str = os.getenv('CONSUMER_GROUP_ID', 'bronze-consumer-group')
     topics: List[str] = None  # Set in __post_init__
     auto_offset_reset: str = 'earliest'  # Start from beginning for new consumer group
-    enable_auto_commit: bool = False  # Manual commit after Snowflake write
+    enable_auto_commit: bool = False  # Manual commit after analytics DB write
     
     # Batching configuration
     batch_size: int = int(os.getenv('BATCH_SIZE', '100'))  # 100 events
     batch_timeout_seconds: float = float(os.getenv('BATCH_TIMEOUT', '300.0'))  # 5 minutes (300 seconds)
     batch_max_size_mb: float = float(os.getenv('BATCH_MAX_SIZE_MB', '128.0'))  # 128 MB max batch size
     
-    # Snowflake settings
-    snowflake_account: str = os.getenv('SNOWFLAKE_ACCOUNT', 'ZLNJTCF-KE38237')
-    snowflake_user: str = os.getenv('SNOWFLAKE_USER', 'ANUPDANGI12')
-    snowflake_password: str = os.getenv('SNOWFLAKE_PASSWORD', '')  # Required
-    snowflake_warehouse: str = os.getenv('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH')
-    snowflake_database: str = os.getenv('SNOWFLAKE_DATABASE', 'FLOWGUARD_DB')
-    snowflake_schema: str = os.getenv('SNOWFLAKE_SCHEMA', 'BRONZE')
+    # PostgreSQL analytics settings
+    analytics_host: str = os.getenv('ANALYTICS_POSTGRES_HOST', 'localhost')
+    analytics_port: int = int(os.getenv('ANALYTICS_POSTGRES_PORT', '5434'))
+    analytics_user: str = os.getenv('ANALYTICS_POSTGRES_USER', 'flowguard')
+    analytics_password: str = os.getenv('ANALYTICS_POSTGRES_PASSWORD', '')
+    analytics_db: str = os.getenv('ANALYTICS_POSTGRES_DB', 'flowguard_analytics')
     
     # Retry configuration
     max_retries: int = 3
@@ -64,27 +63,25 @@ class ConsumerConfig:
             'session.timeout.ms': 30000,  # 30 seconds
         }
     
-    def to_snowflake_config(self) -> dict:
-        """Convert to snowflake-connector config"""
-        if not self.snowflake_password:
-            raise ValueError("SNOWFLAKE_PASSWORD environment variable required")
-        
+    def to_analytics_postgres_config(self) -> dict:
+        """Convert to psycopg2 connection kwargs."""
+        if not self.analytics_password:
+            raise ValueError("ANALYTICS_POSTGRES_PASSWORD environment variable required")
+
         return {
-            'account': self.snowflake_account,
-            'user': self.snowflake_user,
-            'password': self.snowflake_password,
-            'warehouse': self.snowflake_warehouse,
-            'database': self.snowflake_database,
-            'schema': self.snowflake_schema,
-            'numpy': False,  # Disable numpy for simpler data types
+            'host': self.analytics_host,
+            'port': self.analytics_port,
+            'user': self.analytics_user,
+            'password': self.analytics_password,
+            'dbname': self.analytics_db,
         }
     
     def validate(self):
         """Validate configuration"""
         errors = []
         
-        if not self.snowflake_password:
-            errors.append("SNOWFLAKE_PASSWORD environment variable required")
+        if not self.analytics_password:
+            errors.append("ANALYTICS_POSTGRES_PASSWORD environment variable required")
         
         if self.batch_size <= 0:
             errors.append(f"Invalid batch_size: {self.batch_size}")

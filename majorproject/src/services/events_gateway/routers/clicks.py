@@ -3,7 +3,7 @@
 import logging
 from uuid6 import uuid7
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from typing import Dict, Any
 
 from src.shared.schemas.events import ClickEvent, BaseEventResponse
@@ -12,6 +12,7 @@ from src.services.events_gateway.producers.kafka_producer import (
     get_producer,
     KafkaProducerError
 )
+from src.services.events_gateway.security import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -25,14 +26,7 @@ router = APIRouter(
 )
 
 
-@router.post(
-    "/",
-    response_model=BaseEventResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Submit Click/Impression Event",
-    description="Submit a user click or impression event for ad attribution"
-)
-async def create_click_event(click: ClickEvent) -> BaseEventResponse:
+async def _create_click_event_impl(click: ClickEvent, current_user: dict) -> BaseEventResponse:
     """
     Submit a click or impression event to the events gateway.
     
@@ -50,6 +44,8 @@ async def create_click_event(click: ClickEvent) -> BaseEventResponse:
     - Ad impression: is_click=False
     """
     try:
+        click.user_id = int(current_user["id"])
+
         # Generate event_id if not provided (UUID v7 for time-ordering)
         if not click.event_id or click.event_id == "string":
             click.event_id = f"clk_{uuid7().hex[:12]}"
@@ -82,6 +78,26 @@ async def create_click_event(click: ClickEvent) -> BaseEventResponse:
             key=partition_key,
             headers=headers
         )
+
+        behavior_type = "click" if click.is_click else "impression"
+        behavior_payload = {
+            "event_id": click.event_id,
+            "event_type": behavior_type,
+            "event_time": click.timestamp.isoformat(),
+            "user_id": click.user_id,
+            "item_id": int(click.ad_id) if str(click.ad_id).isdigit() else 0,
+            "category": (click.metadata or {}).get("category"),
+            "session_id": click.session_id,
+            "source_page": (click.metadata or {}).get("source_page"),
+            "metadata": {"ad_id": click.ad_id, "ad_campaign_id": click.ad_campaign_id},
+        }
+        if behavior_payload["item_id"] > 0:
+            producer.send_event(
+                topic=TopicName.BEHAVIOR_EVENTS,
+                event=behavior_payload,
+                key=partition_key,
+                headers={"event_type": behavior_type, "source": "events_gateway"},
+            )
         
         event_type_str = "click" if click.is_click else "impression"
         logger.info(
@@ -110,13 +126,30 @@ async def create_click_event(click: ClickEvent) -> BaseEventResponse:
 
 
 @router.post(
+    "/",
+    response_model=BaseEventResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Submit Click/Impression Event",
+    description="Submit a user click or impression event for ad attribution"
+)
+async def create_click_event(
+    click: ClickEvent,
+    current_user: dict = Depends(get_current_user),
+) -> BaseEventResponse:
+    return await _create_click_event_impl(click, current_user)
+
+
+@router.post(
     "/impression",
     response_model=BaseEventResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Submit Impression Event",
     description="Convenience endpoint specifically for ad impressions"
 )
-async def create_impression_event(click: ClickEvent) -> BaseEventResponse:
+async def create_impression_event(
+    click: ClickEvent,
+    current_user: dict = Depends(get_current_user),
+) -> BaseEventResponse:
     """
     Submit an ad impression event (click event with is_click=False).
     
@@ -126,7 +159,7 @@ async def create_impression_event(click: ClickEvent) -> BaseEventResponse:
     click.is_click = False
     click.event_type = "impression"
     
-    return await create_click_event(click)
+    return await _create_click_event_impl(click, current_user)
 
 
 @router.get(

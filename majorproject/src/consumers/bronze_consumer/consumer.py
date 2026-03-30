@@ -1,6 +1,6 @@
-"""Kafka Consumer for Bronze Layer
+"""Kafka Consumer for Bronze Layer.
 
-Consumes events from raw topics and batch-writes to Snowflake.
+Consumes events from raw topics and batch-writes to analytics PostgreSQL.
 Implements micro-batching with time and size limits.
 """
 
@@ -90,19 +90,19 @@ class BronzeConsumer:
         try:
             # Write orders batch
             if self._orders_batch:
-                logger.info(f"Flushing {len(self._orders_batch)} orders to Snowflake...")
+                logger.info(f"Flushing {len(self._orders_batch)} orders to analytics DB...")
                 inserted = self.writer.write_orders_batch(self._orders_batch)
                 self._messages_written += inserted
                 self._batches_written += 1
             
             # Write clicks batch
             if self._clicks_batch:
-                logger.info(f"Flushing {len(self._clicks_batch)} clicks to Snowflake...")
+                logger.info(f"Flushing {len(self._clicks_batch)} clicks to analytics DB...")
                 inserted = self.writer.write_clicks_batch(self._clicks_batch)
                 self._messages_written += inserted
                 self._batches_written += 1
             
-            # ✅ Commit offsets only after successful Snowflake write
+            # ✅ Commit offsets only after successful DB write
             self._consumer.commit(asynchronous=False)
             self._batch_size_bytes = 0  # Reset byte counter
             logger.info("Kafka offsets committed")
@@ -115,7 +115,7 @@ class BronzeConsumer:
             return True
             
         except SnowflakeWriterError as e:
-            logger.error(f"Failed to write batch to Snowflake: {e}")
+            logger.error(f"Failed to write batch to analytics DB: {e}")
             self._errors += 1
             
             # TODO: Implement DLQ (Dead Letter Queue) for failed batches

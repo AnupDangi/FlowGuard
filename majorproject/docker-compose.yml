@@ -21,6 +21,28 @@ services:
       timeout: 5s
       retries: 5
 
+  # ==================== PostgreSQL Analytics ====================
+  flowguard-analytics:
+    image: postgres:15-alpine
+    container_name: flowguard-analytics-postgres
+    hostname: flowguard-analytics
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: flowguard
+      POSTGRES_PASSWORD: flowguard123
+      POSTGRES_DB: flowguard_analytics
+    volumes:
+      - analytics-postgres-data:/var/lib/postgresql/data
+      - ./scripts/init_analytics_postgres.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - flowguard-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowguard -d flowguard_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ==================== Zookeeper ====================
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -267,6 +289,46 @@ services:
         --config retention.ms=172800000 \
         --config compression.type=snappy \
         --config min.insync.replicas=2
+
+      # Create behavior.events.v1 topic
+      kafka-topics --create --if-not-exists \
+        --bootstrap-server kafka-broker-1:9092 \
+        --topic behavior.events.v1 \
+        --partitions 6 \
+        --replication-factor 2 \
+        --config retention.ms=259200000 \
+        --config compression.type=snappy \
+        --config min.insync.replicas=2
+
+      # Create incremental.billing.v1 topic
+      kafka-topics --create --if-not-exists \
+        --bootstrap-server kafka-broker-1:9092 \
+        --topic incremental.billing.v1 \
+        --partitions 3 \
+        --replication-factor 2 \
+        --config retention.ms=259200000 \
+        --config compression.type=snappy \
+        --config min.insync.replicas=2
+
+      # Create recon.overwrite.v1 topic
+      kafka-topics --create --if-not-exists \
+        --bootstrap-server kafka-broker-1:9092 \
+        --topic recon.overwrite.v1 \
+        --partitions 3 \
+        --replication-factor 2 \
+        --config retention.ms=604800000 \
+        --config compression.type=snappy \
+        --config min.insync.replicas=2
+
+      # Create fraud.alerts.v1 topic
+      kafka-topics --create --if-not-exists \
+        --bootstrap-server kafka-broker-1:9092 \
+        --topic fraud.alerts.v1 \
+        --partitions 3 \
+        --replication-factor 2 \
+        --config retention.ms=604800000 \
+        --config compression.type=snappy \
+        --config min.insync.replicas=2
       
       echo 'Kafka topics created successfully!'
       
@@ -285,6 +347,8 @@ networks:
 # ==================== Volumes ====================
 volumes:
   postgres-data:
+    driver: local
+  analytics-postgres-data:
     driver: local
   zookeeper-data:
     driver: local

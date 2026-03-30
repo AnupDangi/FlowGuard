@@ -6,4 +6,5 @@ architecture.excalidraw
 learntools/pyspark/output/
 learntools/miniproject2/src/data/data_storage
 
-*app.log
+logs/
+docs/

@@ -1,0 +1,130 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: flowguard-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.enable-lifecycle"
+    networks:
+      - flowguard-network
+    depends_on:
+      - alertmanager
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: flowguard-alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks:
+      - flowguard-network
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: flowguard-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - flowguard-network
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    container_name: flowguard-node-exporter
+    ports:
+      - "9100:9100"
+    networks:
+      - flowguard-network
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.27.0
+    container_name: flowguard-blackbox-exporter
+    command: ["--config.file=/etc/blackbox_exporter/config.yml"]
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    ports:
+      - "9115:9115"
+    networks:
+      - flowguard-network
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.9.0
+    container_name: flowguard-kafka-exporter
+    command:
+      - "--kafka.server=kafka-broker-1:9092"
+      - "--kafka.server=kafka-broker-2:9093"
+      - "--kafka.server=kafka-broker-3:9094"
+    ports:
+      - "9308:9308"
+    networks:
+      - flowguard-network
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.74.0
+    container_name: flowguard-redis-exporter
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "9121:9121"
+    networks:
+      - flowguard-network
+
+  postgres-exporter-catalog:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    container_name: flowguard-postgres-exporter-catalog
+    environment:
+      DATA_SOURCE_NAME: postgresql://flowguard:flowguard123@postgres:5432/food_catalog?sslmode=disable
+    ports:
+      - "9187:9187"
+    networks:
+      - flowguard-network
+
+  postgres-exporter-analytics:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    container_name: flowguard-postgres-exporter-analytics
+    environment:
+      DATA_SOURCE_NAME: postgresql://flowguard:flowguard123@flowguard-analytics:5432/flowguard_analytics?sslmode=disable
+    ports:
+      - "9188:9187"
+    networks:
+      - flowguard-network
+
+  flowguard-exporter:
+    build:
+      context: ./flowguard_exporter
+      dockerfile: Dockerfile
+    container_name: flowguard-pipeline-exporter
+    environment:
+      ANALYTICS_POSTGRES_HOST: flowguard-analytics
+      ANALYTICS_POSTGRES_PORT: "5432"
+      ANALYTICS_POSTGRES_USER: flowguard
+      ANALYTICS_POSTGRES_PASSWORD: flowguard123
+      ANALYTICS_POSTGRES_DB: flowguard_analytics
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports:
+      - "9116:9115"
+    networks:
+      - flowguard-network
+
+volumes:
+  grafana-data:
+    driver: local
+
+networks:
+  flowguard-network:
+    external: true

@@ -3,7 +3,7 @@
 import logging
 from uuid6 import uuid7
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from typing import Dict, Any
 
 from src.shared.schemas.events import OrderEvent
@@ -13,6 +13,7 @@ from src.services.events_gateway.producers.kafka_producer import (
     KafkaProducerError
 )
 from src.services.events_gateway.db import get_db_cursor
+from src.services.events_gateway.security import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,10 @@ router = APIRouter(
     summary="Submit Order Event",
     description="Submit a user order event - stored in DB then emitted to Kafka"
 )
-async def create_order_event(order: OrderEvent) -> Dict[str, Any]:
+async def create_order_event(
+    order: OrderEvent,
+    current_user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
     """
     Submit an order event to the events gateway.
     
@@ -51,6 +55,9 @@ async def create_order_event(order: OrderEvent) -> Dict[str, Any]:
         if not order.timestamp:
             order.timestamp = datetime.utcnow()
         
+        # Enforce identity from JWT token.
+        order.user_id = int(current_user["id"])
+
         # Step 1: Insert into database (source of truth)
         with get_db_cursor() as cursor:
             insert_query = """
@@ -87,6 +94,24 @@ async def create_order_event(order: OrderEvent) -> Dict[str, Any]:
             event=event_dict,
             key=str(order.user_id),
             headers=headers
+        )
+
+        # Emit canonical behavior signal for personalization.
+        producer.send_event(
+            topic=TopicName.BEHAVIOR_EVENTS,
+            event={
+                "event_id": event_id,
+                "event_type": "order",
+                "event_time": order.timestamp.isoformat(),
+                "user_id": order.user_id,
+                "item_id": order.item_id,
+                "category": (order.metadata or {}).get("category"),
+                "session_id": (order.metadata or {}).get("session_id"),
+                "source_page": (order.metadata or {}).get("source_page", "order"),
+                "metadata": {"order_id": order_id, "price": float(order.price or 0)},
+            },
+            key=str(order.user_id),
+            headers={"event_type": "order", "source": "events_gateway"},
         )
         
         logger.info(f"✅ Order {order_id} event emitted to Kafka")

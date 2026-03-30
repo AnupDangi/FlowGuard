@@ -1,0 +1,122 @@
+version: "3.8"
+
+# Airflow standalone setup for FlowGuard (REFACTORED)
+# Uses LocalExecutor (no Celery/Redis needed for local dev)
+# Shares the flowguard-network so DAGs can reach Kafka/Postgres
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.1-python3.10
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: "FlowGuardFernetKey1234567890abcdefghijklmnop="
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    AIRFLOW__WEBSERVER__SECRET_KEY: "flowguard-secret-key"
+    # Pass FlowGuard analytics env vars into DAGs
+    ANALYTICS_POSTGRES_HOST: "${ANALYTICS_POSTGRES_HOST:-flowguard-analytics}"
+    ANALYTICS_POSTGRES_PORT: "${ANALYTICS_POSTGRES_PORT:-5432}"
+    ANALYTICS_POSTGRES_USER: "${ANALYTICS_POSTGRES_USER:-flowguard}"
+    ANALYTICS_POSTGRES_PASSWORD: "${ANALYTICS_POSTGRES_PASSWORD}"
+    ANALYTICS_POSTGRES_DB: "${ANALYTICS_POSTGRES_DB:-flowguard_analytics}"
+    PYTHONPATH: "/opt/airflow/project"
+  volumes:
+    # Mount DAGs from src/pipelines/batch/airflow_dags
+    - ../../src/pipelines/batch/airflow_dags:/opt/airflow/dags
+    - ../../logs/airflow:/opt/airflow/logs
+    - ../../plugins:/opt/airflow/plugins
+    # Mount TOTAL PROJECT ROOT so DAGs can run scripts from src/pipelines/batch/python_etl
+    - ../../:/opt/airflow/project
+  networks:
+    - flowguard-network
+  depends_on:
+    airflow-postgres:
+      condition: service_healthy
+
+services:
+  # ── Airflow metadata DB ─────────────────────────────────────────────────────
+  airflow-postgres:
+    image: postgres:15-alpine
+    container_name: flowguard-airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-postgres-data:/var/lib/postgresql/data
+    networks:
+      - flowguard-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Airflow DB init ─────────────────────────────────────────────────────────
+  airflow-init:
+    <<: *airflow-common
+    container_name: flowguard-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        # Install project dependencies
+        pip install python-dotenv pandas psycopg2-binary confluent-kafka --quiet
+        
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --firstname FlowGuard \
+          --lastname Admin \
+          --role Admin \
+          --email admin@flowguard.local \
+          --password admin
+        echo "Airflow initialized ✅"
+    restart: "no"
+
+  # ── Airflow Webserver ───────────────────────────────────────────────────────
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: flowguard-airflow-webserver
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        pip install python-dotenv pandas psycopg2-binary confluent-kafka --quiet
+        airflow webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ── Airflow Scheduler ───────────────────────────────────────────────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: flowguard-airflow-scheduler
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        pip install python-dotenv pandas psycopg2-binary confluent-kafka --quiet
+        airflow scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+networks:
+  flowguard-network:
+    external: true
+    name: flowguard-network
+
+volumes:
+  airflow-postgres-data:
+    driver: local

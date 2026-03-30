@@ -1,6 +1,6 @@
-"""Bronze Consumer Entry Point
+"""Bronze Consumer Entry Point.
 
-Main script to run the Kafka → Snowflake consumer.
+Main script to run the Kafka -> analytics PostgreSQL consumer.
 Handles graceful shutdown and logging setup.
 """
 
@@ -64,11 +64,11 @@ def main():
         logger.info("FlowGuard Bronze Consumer Starting")
         logger.info("="*60)
         
-        # Test Snowflake connection
+        # Test analytics PostgreSQL connection
         from src.consumers.bronze_consumer.snowflake_writer import get_writer
         writer = get_writer()
         if not writer.test_connection():
-            logger.error("Snowflake connection test failed. Exiting.")
+            logger.error("Analytics Postgres connection test failed. Exiting.")
             sys.exit(1)
         
         # Create and start consumer

@@ -1,127 +1,144 @@
-# FlowGuard - Real-Time Event Processing Pipeline
+# FlowGuard - End-to-End Zomato-Style Data Platform
 
-Production-grade event streaming system for food delivery analytics (Zomato-inspired).
+FlowGuard is a local-first data engineering platform for event ingestion, real-time personalization/fraud detection, and batch analytics pipelines.
 
-## Architecture (Current: Stage 2)
+It includes:
+- event APIs (FastAPI),
+- Kafka ingestion,
+- Bronze/Silver/Gold analytics in PostgreSQL,
+- Airflow orchestration,
+- real-time consumers for personalization and fraud,
+- and full observability with Prometheus + Grafana.
 
-```
-PostgreSQL (port 5432)     Kafka Cluster (19092-19094)
-     ↓                              ↑
-Food Catalog API (8001)    Events Gateway API (8000)
-     ↓                              ↑
-     └─────→ Web UI (3000) ────────┘
-```
+## Implemented Architecture
 
-**Separation of concerns:**
+![FlowGuard Architecture](./ZomatoDataEngineering.png)
 
-- Reference data (food items) → PostgreSQL + Food Catalog Service
-- Event data (orders/clicks) → Events Gateway + Kafka
+## What This Repo Contains
 
----
+- `src/services/events_gateway/`: Auth + event ingestion APIs (orders, clicks, behavior, fraud, ads)
+- `src/consumers/bronze_consumer/`: Kafka -> Bronze writes
+- `src/pipelines/`: Batch and real-time pipeline code
+- `scripts/`: Setup, startup, verification, and monitoring scripts
+- `infrastructure/monitoring/`: Prometheus, Grafana, exporters, alerting
+- `zomato-web-app/`: Next.js frontend with auth and event tracking
 
-## Quick Start
+## Prerequisites
 
-### 1. Install Dependencies
+- Docker + Docker Compose
+- Python 3.10+
+- Node.js + pnpm (for frontend)
+
+## Environment Setup
+
+1. Create env file:
 
 ```bash
-pip install -r requirements.txt
+cp .env.example .env
+```
+
+2. Install Python deps:
+
+```bash
+/Users/anupdangi/Desktop/AnupAI/projects/2026/FlowGuard/venv/bin/pip install -r requirements.txt
+```
+
+3. Install frontend deps:
+
+```bash
 cd zomato-web-app && pnpm install && cd ..
 ```
 
-### 2. Start Everything (One Command)
+## Start the Platform
+
+### Option A: Core platform only
 
 ```bash
 ./scripts/start_all.sh
 ```
 
-### 3. Start Frontend
+### Option B: Core platform + monitoring (recommended)
+
+```bash
+./scripts/start_platform_with_monitoring.sh
+```
+
+### Start additional pipeline workers
+
+```bash
+./scripts/start_bronze_consumer.sh
+./scripts/start_airflow.sh
+./scripts/start_flink.sh personalize-python
+./scripts/start_flink.sh fraud-python
+```
+
+### Start frontend
 
 ```bash
 cd zomato-web-app && pnpm dev
 ```
 
-### 4. Monitor Events (Real-Time)
+## Service Endpoints
+
+- Events Gateway: `http://localhost:8000`
+- Food Catalog API: `http://localhost:8001`
+- Kafka UI: `http://localhost:8081`
+- Airflow: `http://localhost:8080`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3001` (`admin` / `admin`)
+
+## Data Flow (Implemented)
+
+1. Frontend sends auth-protected order/click/behavior events to Events Gateway.
+2. Gateway enforces JWT identity and publishes canonical events to Kafka.
+3. Bronze consumer ingests Kafka events into `analytics.bronze_*` tables.
+4. Airflow DAGs run Silver/Gold transforms into `analytics.silver_*` and `analytics.gold_*`.
+5. Real-time jobs update Redis signals for personalization and fraud alerts.
+6. Recon process updates Redis totals safely (overwrite-if-greater strategy).
+
+## Monitoring and Alerting
+
+Monitoring stack lives in `infrastructure/monitoring/` and includes:
+- Prometheus scraping gateway, Kafka, Redis, Postgres, blackbox health, custom pipeline exporter.
+- Grafana auto-provisioned datasource and `FlowGuard Overview` dashboard.
+- Alert rules for gateway down, Kafka/Postgres exporter down, Airflow health fail, ETL stale, fraud spikes.
+
+Detailed guide: `docs/monitoring/README.md`
+
+## Verification and Testing
+
+Run full automated checks:
 
 ```bash
-# Terminal 1: Event monitor
-python scripts/monitor_events.py
+./scripts/test_all_features.sh
+```
 
-# Terminal 2: Service logs
+This validates:
+- Phase 1+2 APIs (`scripts/verify_phases.py`)
+- Phase 3 analytics table/query readiness (`scripts/verify_phase3.py`)
+- Pipeline monitor snapshot (`scripts/monitor_pipeline.py`)
+
+Also validate frontend build:
+
+```bash
+cd zomato-web-app && npm run build
+```
+
+## Useful Commands
+
+```bash
+# Check DAG and analytics readiness
+python scripts/check_dag_readiness.py
+python scripts/verify_pipeline.py
+
+# Tail service logs
 ./scripts/monitor_services.sh
 
-# Terminal 3: Test events
-python scripts/test_send_event.py
+# Restart monitoring stack only
+docker compose -f infrastructure/monitoring/docker-compose.yml up -d
 ```
 
-### 5. Open Application
+## Notes
 
-- Web UI: http://localhost:3000
-- Food Catalog API: http://localhost:8001/docs
-- Events Gateway API: http://localhost:8000/docs
-- Kafka UI: http://localhost:8080
-
----
-
-## Scripts
-
-`./scripts/start_all.sh` - Start all services (bash script)  
-`./scripts/start_catalog.sh` - Start Food Catalog only (bash script)  
-`python scripts/monitor_events.py` - Real-time Kafka event monitor  
-`./scripts/monitor_services.sh` - Tail all service logs (bash script)  
-`python scripts/test_send_event.py` - Send test order event  
-`python scripts/test_catalog_api.py` - Test Food Catalog API  
-`python src/main.py start-gateway` - Start Events Gateway (CLI)  
-`python src/main.py start-catalog` - Start Food Catalog (CLI)  
-`python src/main.py health-check` - Check Kafka status
-
----
-
-## What Works (Stage 2 Complete)
-
-✅ PostgreSQL - 25 food items  
-✅ Food Catalog Service - REST API (GET)  
-✅ Events Gateway Service - REST API (POST)  
-✅ Web UI - Browse, filter, order  
-✅ Event Tracking - Orders → Kafka  
-✅ Kafka Cluster - 3 brokers, 2 topics
-
----
-
-## Data Flow
-
-**Reference Data:** food_items.json → PostgreSQL → Food Catalog API → UI  
-**Event Data:** UI → Events Gateway → Kafka → Snowflake (future)
-
----
-
-## Services
-
-**Food Catalog (8001):** GET /api/foods, GET /api/foods/{id}, GET /health  
-**Events Gateway (8000):** POST /api/v1/orders, POST /api/v1/clicks, GET /health
-
----
-
-## Tech Stack
-
-FastAPI, PostgreSQL, Kafka, Next.js 16, React 19, TypeScript, Tailwind, Docker
-
----
-
-## Future (Stage 3+)
-
-Kafka → Snowflake Bronze → Flink attribution → Spark ETL → Redis billing
-
----
-
-## Original Architecture (Future)
-
-```
-User Action (Web App)
-↓
-[Events Gateway FastAPI]
-↓
-[Kafka Cluster 1: raw.orders.v1]
-↓ (2 consumers)
-├──→ [Data Lake] → S3 → [Airflow ETL] → [Kafka 3: recon.v1]
-└──→ [Flink] → [Kafka 2: attributed.events.v1] → [Notifications] → [Redis + User]
-```
+- Default runtime backend is PostgreSQL analytics (Snowflake is optional/legacy).
+- If you need a clean analytics reset, remove `analytics-postgres-data` volume and restart Docker services.

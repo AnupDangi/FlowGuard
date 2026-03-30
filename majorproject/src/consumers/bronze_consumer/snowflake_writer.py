@@ -1,16 +1,17 @@
-"""Snowflake Writer for Bronze Layer
+"""PostgreSQL analytics writer for Bronze layer.
 
-Handles bulk inserts to Snowflake with connection pooling and error handling.
+This module keeps the legacy filename (`snowflake_writer.py`) to minimize import churn
+while migrating from Snowflake to local PostgreSQL analytics.
 """
 
 import json
 import logging
-from typing import List, Dict, Any, Optional
-from datetime import datetime, date
 from contextlib import contextmanager
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-import snowflake.connector
-from snowflake.connector.errors import ProgrammingError, DatabaseError
+import psycopg2
+from psycopg2.extras import execute_batch
 
 from .config import get_config
 
@@ -18,92 +19,57 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_timestamp(ts_value) -> Optional[datetime]:
-    """Parse a timestamp value to a Python datetime object.
-    
-    Snowflake connector correctly maps Python datetime -> TIMESTAMP_NTZ.
-    Passing raw ISO strings causes NULL because the connector doesn't auto-cast.
-    """
+    """Parse supported timestamp values to Python datetime."""
     if ts_value is None:
         return None
     if isinstance(ts_value, datetime):
         return ts_value
     if isinstance(ts_value, str):
         try:
-            # Handle both 'Z' suffix and '+00:00' offset
-            return datetime.fromisoformat(ts_value.replace('Z', '+00:00'))
+            return datetime.fromisoformat(ts_value.replace("Z", "+00:00"))
         except ValueError:
-            logger.warning(f"Could not parse timestamp: {ts_value!r}")
+            logger.warning("Could not parse timestamp: %r", ts_value)
             return None
     return None
 
 
-def _extract_date(ts_value) -> Optional[date]:
-    """Extract a date from a timestamp value for PARTITION_DATE column."""
-    dt = _parse_timestamp(ts_value)
-    return dt.date() if dt else None
-
-
 class SnowflakeWriterError(Exception):
-    """Custom exception for Snowflake writer errors"""
-    pass
+    """Compatibility error type for Bronze consumer."""
 
 
 class SnowflakeWriter:
-    """Bulk writer for Snowflake Bronze tables"""
-    
+    """Bulk writer for PostgreSQL BRONZE tables with idempotent upserts."""
+
     def __init__(self):
-        """Initialize Snowflake connection"""
         self.config = get_config()
         self._connection = None
-        self._last_connection_check = 0
-        self._connection_check_interval = 60  # Check connection every 60 seconds
         self._connect()
-    
+
     def _connect(self):
-        """Establish Snowflake connection"""
         try:
             if self._connection:
                 try:
                     self._connection.close()
-                except:
+                except Exception:
                     pass
-            
-            self._connection = snowflake.connector.connect(
-                **self.config.to_snowflake_config()
-            )
+            self._connection = psycopg2.connect(**self.config.to_analytics_postgres_config())
+            self._connection.autocommit = False
             logger.info(
-                f"Connected to Snowflake: {self.config.snowflake_database}.{self.config.snowflake_schema}"
+                "Connected to analytics Postgres: %s:%s/%s",
+                self.config.analytics_host,
+                self.config.analytics_port,
+                self.config.analytics_db,
             )
         except Exception as e:
-            logger.error(f"Failed to connect to Snowflake: {e}")
+            logger.error("Failed to connect to analytics Postgres: %s", e)
             raise SnowflakeWriterError(f"Connection failed: {e}")
-    
-    def _ensure_connection(self):
-        """Ensure connection is alive, reconnect if needed"""
-        import time
-        current_time = time.time()
-        
-        # Only check periodically to avoid overhead
-        if current_time - self._last_connection_check > self._connection_check_interval:
-            try:
-                # Quick connection test
-                cursor = self._connection.cursor()
-                cursor.execute("SELECT 1")
-                cursor.close()
-                self._last_connection_check = current_time
-            except Exception as e:
-                logger.warning(f"Connection check failed, reconnecting: {e}")
-                self._connect()
-                self._last_connection_check = current_time
-    
+
     @contextmanager
     def _get_cursor(self):
-        """Get cursor with auto-commit"""
         cursor = None
         try:
-            # Ensure connection is alive before getting cursor
-            self._ensure_connection()
-            
+            if self._connection is None or self._connection.closed:
+                self._connect()
             cursor = self._connection.cursor()
             yield cursor
             self._connection.commit()
@@ -111,253 +77,144 @@ class SnowflakeWriter:
             if self._connection:
                 try:
                     self._connection.rollback()
-                except:
+                except Exception:
                     pass
-            # If it's a connection error, try to reconnect
-            if 'connection' in str(e).lower() or 'session' in str(e).lower():
-                logger.warning(f"Connection error detected, will reconnect on next operation: {e}")
+            if "closed" in str(e).lower() or "connection" in str(e).lower():
+                logger.warning("Connection issue detected, reconnecting on next attempt: %s", e)
                 try:
                     self._connect()
-                except:
+                except Exception:
                     pass
-            raise e
+            raise
         finally:
             if cursor:
                 cursor.close()
-    
+
     def write_orders_batch(self, events: List[tuple]) -> int:
-        """Write batch of order events to ORDERS_RAW table with idempotency.
-
-        Actual ORDERS_RAW DDL (Snowflake):
-          EVENT_ID VARCHAR, ORDER_ID VARCHAR, USER_ID NUMBER, ITEM_ID NUMBER,
-          ITEM_NAME VARCHAR, PRICE NUMBER, STATUS VARCHAR,
-          EVENT_TIMESTAMP TIMESTAMP_NTZ, RAW_EVENT VARIANT,
-          INGESTION_TIMESTAMP TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),  <- auto
-          PARTITION_DATE DATE AS (CAST(EVENT_TIMESTAMP AS DATE)),          <- computed
-          EVENT_TYPE VARCHAR, SCHEMA_VERSION VARCHAR,
-          SOURCE_TOPIC VARCHAR, PRODUCER_SERVICE VARCHAR, INGESTION_ID VARCHAR
-        """
+        """Write orders into analytics.bronze_orders_raw."""
         if not events:
             return 0
-
         try:
             with self._get_cursor() as cursor:
-                # Staging: RAW_EVENT as VARCHAR (executemany can't call PARSE_JSON(%s))
-                # USER_ID/ITEM_ID as NUMBER to match target schema
-                cursor.execute("""
-                    CREATE OR REPLACE TEMPORARY TABLE ORDERS_STAGING (
-                        EVENT_ID      VARCHAR,
-                        ORDER_ID      VARCHAR,
-                        USER_ID       NUMBER,
-                        ITEM_ID       NUMBER,
-                        ITEM_NAME     VARCHAR,
-                        PRICE         FLOAT,
-                        STATUS        VARCHAR,
-                        EVENT_TIMESTAMP TIMESTAMP_NTZ,
-                        RAW_EVENT     VARCHAR,
-                        EVENT_TYPE    VARCHAR,
-                        SCHEMA_VERSION VARCHAR,
-                        SOURCE_TOPIC  VARCHAR,
-                        PRODUCER_SERVICE VARCHAR,
-                        INGESTION_ID  VARCHAR PRIMARY KEY
-                    )
-                """)
-
-                insert_staging = """
-                    INSERT INTO ORDERS_STAGING
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """
-
                 rows = []
                 for event, metadata in events:
-                    ts = _parse_timestamp(event.get('timestamp'))
-                    uid = event.get('user_id')
-                    iid = event.get('item_id')
-                    rows.append((
-                        event.get('event_id'),
-                        event.get('order_id'),
-                        int(uid) if uid is not None else None,
-                        int(iid) if iid is not None else None,
-                        event.get('item_name'),
-                        event.get('price'),
-                        event.get('status', 'confirmed'),
-                        ts,
-                        json.dumps(event),   # VARCHAR — TRY_PARSE_JSON in MERGE
-                        event.get('event_type', 'order'),
-                        metadata.get('schema_version'),
-                        metadata.get('source_topic'),
-                        metadata.get('producer_service'),
-                        metadata.get('ingestion_id')
-                    ))
-
-                cursor.executemany(insert_staging, rows)
-
-                # MERGE: exclude PARTITION_DATE (computed) and INGESTION_TIMESTAMP (default)
-                cursor.execute("""
-                    MERGE INTO ORDERS_RAW AS target
-                    USING ORDERS_STAGING AS source
-                    ON target.INGESTION_ID = source.INGESTION_ID
-                    WHEN NOT MATCHED THEN
-                        INSERT (
-                            EVENT_ID, ORDER_ID, USER_ID, ITEM_ID, ITEM_NAME, PRICE, STATUS,
-                            EVENT_TIMESTAMP, RAW_EVENT, EVENT_TYPE,
-                            SCHEMA_VERSION, SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
+                    ts = _parse_timestamp(event.get("timestamp"))
+                    rows.append(
+                        (
+                            event.get("event_id"),
+                            event.get("order_id"),
+                            event.get("user_id"),
+                            event.get("item_id"),
+                            event.get("item_name"),
+                            event.get("price"),
+                            event.get("status", "confirmed"),
+                            ts,
+                            json.dumps(event),
+                            event.get("event_type", "order"),
+                            metadata.get("schema_version"),
+                            metadata.get("source_topic"),
+                            metadata.get("producer_service"),
+                            metadata.get("ingestion_id"),
+                            metadata.get("kafka_partition"),
+                            metadata.get("kafka_offset"),
                         )
-                        VALUES (
-                            source.EVENT_ID, source.ORDER_ID, source.USER_ID, source.ITEM_ID,
-                            source.ITEM_NAME, source.PRICE, source.STATUS, source.EVENT_TIMESTAMP,
-                            TRY_PARSE_JSON(source.RAW_EVENT),
-                            source.EVENT_TYPE, source.SCHEMA_VERSION,
-                            source.SOURCE_TOPIC, source.PRODUCER_SERVICE, source.INGESTION_ID
-                        )
-                """)
-                inserted = cursor.rowcount
-                skipped = len(events) - inserted
+                    )
 
-                cursor.execute("DROP TABLE IF EXISTS ORDERS_STAGING")
-
-                if skipped > 0:
-                    logger.info(f"Merged {inserted} orders (skipped {skipped} duplicates)")
+                sql = """
+                    INSERT INTO analytics.bronze_orders_raw (
+                        event_id, order_id, user_id, item_id, item_name, price, status,
+                        event_timestamp, raw_event, event_type, schema_version,
+                        source_topic, producer_service, ingestion_id, kafka_partition, kafka_offset
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s::jsonb, %s, %s,
+                        %s, %s, %s, %s, %s
+                    )
+                    ON CONFLICT (ingestion_id) DO NOTHING
+                """
+                execute_batch(cursor, sql, rows, page_size=500)
+                inserted = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+                if inserted < len(events):
+                    logger.info("Merged %s orders (skipped %s duplicates)", inserted, len(events) - inserted)
                 else:
-                    logger.info(f"Inserted {inserted} orders into Snowflake")
+                    logger.info("Inserted %s orders into analytics Postgres", inserted)
                 return inserted
-
-        except (ProgrammingError, DatabaseError) as e:
-            logger.error(f"Snowflake write error: {e}")
-            raise SnowflakeWriterError(f"Write failed: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error writing to Snowflake: {e}")
-            raise SnowflakeWriterError(f"Unexpected error: {e}")
+            logger.error("Error writing orders batch: %s", e)
+            raise SnowflakeWriterError(f"Write failed: {e}")
 
-    
     def write_clicks_batch(self, events: List[tuple]) -> int:
-        """Write batch of click events to CLICKS_RAW table with idempotency.
-
-        Actual CLICKS_RAW DDL (Snowflake):
-          EVENT_ID VARCHAR, USER_ID NUMBER, EVENT_TYPE VARCHAR, ITEM_ID NUMBER,
-          SESSION_ID VARCHAR, EVENT_TIMESTAMP TIMESTAMP_NTZ, RAW_EVENT VARIANT,
-          INGESTION_TIMESTAMP TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),  <- auto
-          PARTITION_DATE DATE AS (CAST(EVENT_TIMESTAMP AS DATE)),          <- computed
-          SCHEMA_VERSION VARCHAR, SOURCE_TOPIC VARCHAR,
-          PRODUCER_SERVICE VARCHAR, INGESTION_ID VARCHAR
-        """
+        """Write clicks/impressions into analytics.bronze_clicks_raw."""
         if not events:
             return 0
-
         try:
             with self._get_cursor() as cursor:
-                cursor.execute("""
-                    CREATE OR REPLACE TEMPORARY TABLE CLICKS_STAGING (
-                        EVENT_ID      VARCHAR,
-                        USER_ID       NUMBER,
-                        EVENT_TYPE    VARCHAR,
-                        ITEM_ID       NUMBER,
-                        SESSION_ID    VARCHAR,
-                        EVENT_TIMESTAMP TIMESTAMP_NTZ,
-                        RAW_EVENT     VARCHAR,
-                        SCHEMA_VERSION VARCHAR,
-                        SOURCE_TOPIC  VARCHAR,
-                        PRODUCER_SERVICE VARCHAR,
-                        INGESTION_ID  VARCHAR PRIMARY KEY
-                    )
-                """)
-
-                insert_staging = """
-                    INSERT INTO CLICKS_STAGING
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """
-
                 rows = []
                 for event, metadata in events:
-                    ts = _parse_timestamp(event.get('timestamp'))
-                    uid = event.get('user_id')
-                    iid = event.get('item_id')
-                    rows.append((
-                        event.get('event_id'),
-                        int(uid) if uid is not None else None,
-                        event.get('event_type'),
-                        int(iid) if iid is not None else None,
-                        event.get('session_id'),
-                        ts,
-                        json.dumps(event),   # VARCHAR — TRY_PARSE_JSON in MERGE
-                        metadata.get('schema_version'),
-                        metadata.get('source_topic'),
-                        metadata.get('producer_service'),
-                        metadata.get('ingestion_id')
-                    ))
-
-                cursor.executemany(insert_staging, rows)
-
-                # MERGE: exclude PARTITION_DATE (computed) and INGESTION_TIMESTAMP (default)
-                cursor.execute("""
-                    MERGE INTO CLICKS_RAW AS target
-                    USING CLICKS_STAGING AS source
-                    ON target.INGESTION_ID = source.INGESTION_ID
-                    WHEN NOT MATCHED THEN
-                        INSERT (
-                            EVENT_ID, USER_ID, EVENT_TYPE, ITEM_ID, SESSION_ID,
-                            EVENT_TIMESTAMP, RAW_EVENT,
-                            SCHEMA_VERSION, SOURCE_TOPIC, PRODUCER_SERVICE, INGESTION_ID
+                    ts = _parse_timestamp(event.get("timestamp"))
+                    rows.append(
+                        (
+                            event.get("event_id"),
+                            event.get("user_id"),
+                            event.get("event_type"),
+                            event.get("item_id"),
+                            event.get("session_id"),
+                            ts,
+                            json.dumps(event),
+                            metadata.get("schema_version"),
+                            metadata.get("source_topic"),
+                            metadata.get("producer_service"),
+                            metadata.get("ingestion_id"),
+                            metadata.get("kafka_partition"),
+                            metadata.get("kafka_offset"),
                         )
-                        VALUES (
-                            source.EVENT_ID, source.USER_ID, source.EVENT_TYPE,
-                            source.ITEM_ID, source.SESSION_ID, source.EVENT_TIMESTAMP,
-                            TRY_PARSE_JSON(source.RAW_EVENT),
-                            source.SCHEMA_VERSION, source.SOURCE_TOPIC,
-                            source.PRODUCER_SERVICE, source.INGESTION_ID
-                        )
-                """)
-                inserted = cursor.rowcount
-                skipped = len(events) - inserted
-
-                cursor.execute("DROP TABLE IF EXISTS CLICKS_STAGING")
-
-                if skipped > 0:
-                    logger.info(f"Merged {inserted} clicks (skipped {skipped} duplicates)")
+                    )
+                sql = """
+                    INSERT INTO analytics.bronze_clicks_raw (
+                        event_id, user_id, event_type, item_id, session_id,
+                        event_timestamp, raw_event, schema_version,
+                        source_topic, producer_service, ingestion_id, kafka_partition, kafka_offset
+                    ) VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s, %s::jsonb, %s,
+                        %s, %s, %s, %s, %s
+                    )
+                    ON CONFLICT (ingestion_id) DO NOTHING
+                """
+                execute_batch(cursor, sql, rows, page_size=500)
+                inserted = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+                if inserted < len(events):
+                    logger.info("Merged %s clicks (skipped %s duplicates)", inserted, len(events) - inserted)
                 else:
-                    logger.info(f"Inserted {inserted} clicks into Snowflake")
+                    logger.info("Inserted %s clicks into analytics Postgres", inserted)
                 return inserted
-
-        except (ProgrammingError, DatabaseError) as e:
-            logger.error(f"Snowflake write error: {e}")
-            raise SnowflakeWriterError(f"Write failed: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error writing to Snowflake: {e}")
-            raise SnowflakeWriterError(f"Unexpected error: {e}")
+            logger.error("Error writing clicks batch: %s", e)
+            raise SnowflakeWriterError(f"Write failed: {e}")
 
-    
     def test_connection(self) -> bool:
-        """Test Snowflake connection
-        
-        Returns:
-            bool: True if connection successful
-        """
         try:
             with self._get_cursor() as cursor:
-                cursor.execute("SELECT CURRENT_VERSION()")
-                version = cursor.fetchone()[0]
-                logger.info(f"Snowflake connection OK. Version: {version}")
-                return True
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+            return True
         except Exception as e:
-            logger.error(f"Connection test failed: {e}")
+            logger.error("Connection test failed: %s", e)
             return False
-    
+
     def close(self):
-        """Close Snowflake connection"""
         if self._connection:
             try:
                 self._connection.close()
-                logger.info("Snowflake connection closed")
+                logger.info("Analytics Postgres connection closed")
             except Exception as e:
-                logger.error(f"Error closing connection: {e}")
+                logger.error("Error closing connection: %s", e)
 
 
-# Global writer instance
 _writer_instance: SnowflakeWriter = None
 
 
 def get_writer() -> SnowflakeWriter:
-    """Get or create global writer instance"""
     global _writer_instance
     if _writer_instance is None:
         _writer_instance = SnowflakeWriter()
@@ -365,7 +222,6 @@ def get_writer() -> SnowflakeWriter:
 
 
 def close_writer():
-    """Close global writer instance"""
     global _writer_instance
     if _writer_instance is not None:
         _writer_instance.close()

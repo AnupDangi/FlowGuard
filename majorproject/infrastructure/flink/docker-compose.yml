@@ -1,0 +1,94 @@
+version: "3.8"
+
+# Flink cluster for FlowGuard real-time attribution (REFACTORED)
+# PyFlink job: src/pipelines/realtime/flink/realtime_attribution.py
+
+x-flink-common: &flink-common
+  image: flink:1.18-scala_2.12-java11
+  environment:
+    FLINK_PROPERTIES: |
+      jobmanager.rpc.address: flink-jobmanager
+      taskmanager.numberOfTaskSlots: 4
+      parallelism.default: 2
+      state.backend: rocksdb
+      state.backend.rocksdb.memory.managed: true
+      state.checkpoints.dir: file:///tmp/flink-checkpoints
+      execution.checkpointing.interval: 60000
+      execution.checkpointing.mode: EXACTLY_ONCE
+      execution.checkpointing.min-pause: 30000
+  networks:
+    - flowguard-network
+
+services:
+  # ── Flink JobManager ────────────────────────────────────────────────────────
+  flink-jobmanager:
+    <<: *flink-common
+    container_name: flowguard-flink-jobmanager
+    command: jobmanager
+    ports:
+      - "8082:8081"
+    volumes:
+      - flink-checkpoints:/tmp/flink-checkpoints
+      # Mount the Flink pipeline code
+      - ../../src/pipelines/realtime/flink:/opt/flink/userjobs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ── Flink TaskManager ───────────────────────────────────────────────────────
+  flink-taskmanager:
+    <<: *flink-common
+    container_name: flowguard-flink-taskmanager
+    command: taskmanager
+    volumes:
+      - flink-checkpoints:/tmp/flink-checkpoints
+      - ../../src/pipelines/realtime/flink:/opt/flink/userjobs
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+
+  # ── PyFlink job submitter ───────────────────────────────────────────────────
+  flink-job-submitter:
+    image: python:3.10-slim
+    container_name: flowguard-flink-job-submitter
+    networks:
+      - flowguard-network
+    volumes:
+      # Mount the Flink pipeline code AND requirements
+      - ../../src/pipelines/realtime/flink:/app/flink_jobs
+      - ./requirements.txt:/app/requirements.txt
+      - ../../.env:/app/.env
+    working_dir: /app
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka-broker-1:9092,kafka-broker-2:9093,kafka-broker-3:9094"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      FLINK_JOBMANAGER_HOST: "flink-jobmanager"
+      FLINK_JOBMANAGER_PORT: "8081"
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y default-jdk build-essential python3-dev wget &&
+        export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-arm64 &&
+        wget -q -P /app/flink_jobs/ https://repo.maven.apache.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.0.0-1.18/flink-sql-connector-kafka-3.0.0-1.18.jar || true &&
+        pip install -r requirements.txt --quiet &&
+        echo 'Waiting for Flink JobManager...' &&
+        sleep 20 &&
+        python /app/flink_jobs/realtime_attribution.py
+      "
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+      flink-taskmanager:
+        condition: service_started
+    restart: "no"
+
+networks:
+  flowguard-network:
+    external: true
+    name: flowguard-network
+
+volumes:
+  flink-checkpoints:
+    driver: local

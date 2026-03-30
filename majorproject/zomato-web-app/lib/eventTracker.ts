@@ -4,32 +4,35 @@
  */
 
 const EVENTS_GATEWAY_URL = 'http://localhost:8000';
+const AUTH_STORAGE_KEY = 'flowguard_auth';
 
-// Generate session-based user ID
-export function getUserId(): string {
-  // Check if running in browser (not SSR)
-  if (typeof window === 'undefined') {
-    return 'user_ssr';
+function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw).access_token || null;
+  } catch {
+    return null;
   }
-  
-  let userId = localStorage.getItem('flowguard_user_id');
-  if (!userId) {
-    userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    localStorage.setItem('flowguard_user_id', userId);
-  }
-  return userId;
 }
 
-// Get numeric user ID (hash of string ID)
-function getNumericUserId(): number {
-  const userId = getUserId();
-  // Simple hash to convert string to number
-  let hash = 0;
-  for (let i = 0; i < userId.length; i++) {
-    hash = ((hash << 5) - hash) + userId.charCodeAt(i);
-    hash |= 0; // Convert to 32bit integer
+function getSessionId(): string {
+  if (typeof window === 'undefined') return 'session_ssr';
+  let sid = localStorage.getItem('flowguard_session_id');
+  if (!sid) {
+    sid = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem('flowguard_session_id', sid);
   }
-  return Math.abs(hash);
+  return sid;
+}
+
+function authHeaders() {
+  const token = getAuthToken();
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
 }
 
 // Send order event - returns orderId for navigation
@@ -42,18 +45,21 @@ export async function trackOrderEvent(
   itemImageUrl: string = ''
 ): Promise<{ orderId: string; success: boolean }> {
   try {
-    // Server generates order_id and event_id - no client-side generation
     const payload = {
-      user_id: getNumericUserId(),
       item_id: itemId,
       item_name: itemName,
       price: price,
       timestamp: new Date().toISOString(),
+      metadata: {
+        category: itemCategory,
+        source_page: 'home',
+        session_id: getSessionId(),
+      },
     };
 
     const response = await fetch(`${EVENTS_GATEWAY_URL}/api/v1/orders/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(payload),
     });
 
@@ -77,7 +83,7 @@ export async function trackOrderEvent(
         price: price,
         description: itemDescription,
         image_url: itemImageUrl,
-        user_id: getUserId(),
+        user_id: 'auth_user',
         timestamp: payload.timestamp
       };
       localStorage.setItem(`order_${orderId}`, JSON.stringify(orderDetails));
@@ -90,25 +96,32 @@ export async function trackOrderEvent(
   }
 }
 
-// Send click event
-export async function trackClickEvent(adId: string, isClick: boolean): Promise<boolean> {
+// Send click or impression event.
+export async function trackClickEvent(
+  adId: string,
+  isClick: boolean,
+  category: string = '',
+  sourcePage: string = 'home',
+): Promise<boolean> {
   try {
-    // Extract food_id from adId like "food_5" -> 5
-    const itemId = adId.startsWith('food_') ? parseInt(adId.split('_')[1]) : null;
+    const itemId = adId.startsWith('food_') ? parseInt(adId.split('_')[1], 10) : null;
     
     const payload = {
-      user_id: getNumericUserId(),
       ad_id: adId,
-      item_id: itemId,  // ✅ Now includes actual food item ID
-      session_id: getUserId(),  // ✅ Use user session ID
+      item_id: itemId,
+      session_id: getSessionId(),
       is_click: isClick,
       event_type: isClick ? 'click' : 'impression',
       timestamp: new Date().toISOString(),
+      metadata: {
+        category,
+        source_page: sourcePage,
+      },
     };
 
     const response = await fetch(`${EVENTS_GATEWAY_URL}/api/v1/clicks/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(payload),
     });
 
@@ -121,6 +134,33 @@ export async function trackClickEvent(adId: string, isClick: boolean): Promise<b
     return true;
   } catch (error) {
     console.error('Error tracking click:', error);
+    return false;
+  }
+}
+
+export async function trackViewEvent(
+  itemId: number,
+  category: string,
+  sourcePage: string = 'food_detail',
+): Promise<boolean> {
+  try {
+    const payload = {
+      event_type: 'view',
+      event_time: new Date().toISOString(),
+      item_id: itemId,
+      category,
+      session_id: getSessionId(),
+      source_page: sourcePage,
+      metadata: {},
+    };
+    const response = await fetch(`${EVENTS_GATEWAY_URL}/api/v1/behavior/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return response.ok;
+  } catch (error) {
+    console.error('Error tracking view:', error);
     return false;
   }
 }
